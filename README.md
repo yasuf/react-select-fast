@@ -10,6 +10,8 @@ It's a drop-in replacement. Props, `components` overrides, `styles`, `classNames
 npm install react-select@npm:react-select-fast
 ```
 
+**[Try the live side-by-side demo →](https://yasuf.github.io/react-select-fast/)**
+
 ## Results
 
 Measured in a browser with React 16, production builds, one run of each version on the same page, median of 3–5 rounds. See [bench/](bench/). Times are upstream → fast.
@@ -35,8 +37,11 @@ On React 19, at 5,000 options with default option rendering: hover 49 → 1.6 ms
 
 ## Demo
 
+Live at **https://yasuf.github.io/react-select-fast/**.
+
 ```sh
-yarn demo    # builds demo/ and serves it at http://127.0.0.1:5200/
+yarn demo          # build demo/ and serve it at http://127.0.0.1:5200/
+yarn demo:deploy   # build and publish it to the gh-pages branch (GitHub Pages)
 ```
 
 The two libraries run side by side on React 19, with the same options and the same main thread. Hover the lists, use the arrow keys, or type. Each panel times every interaction from the input event until React has committed and laid out, and shows the median, p95 and a bar per interaction (both panels use the same 0–100 ms scale). **Run script** plays the same 110-step interaction (hover sweep, arrow keys, typing) one step per frame, and **Race both** runs it on each panel and compares wall-clock time. The main-thread graph at the top shows dropped frames. Switch the option count (1k–20k) and default vs custom `styles.option` at the top.
