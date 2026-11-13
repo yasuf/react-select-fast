@@ -7,6 +7,10 @@
   "contributors": [
     "Jed Watson (original react-select author)"
   ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yasuf/react-select-fast.git"
+  },
   "license": "MIT",
   "dependencies": {
     "@babel/core": "^7.19.6",

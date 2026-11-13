@@ -10,6 +10,13 @@
   "contributors": [
     "Jed Watson (original react-select author)"
   ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yasuf/react-select-fast.git",
+    "directory": "packages/react-select"
+  },
+  "homepage": "https://github.com/yasuf/react-select-fast#readme",
+  "bugs": "https://github.com/yasuf/react-select-fast/issues",
   "license": "MIT",
   "dependencies": {
     "@babel/runtime": "^7.12.0",
