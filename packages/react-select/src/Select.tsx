@@ -54,6 +54,7 @@ import { defaultTheme, ThemeConfig } from './theme';
 
 import {
   ActionMeta,
+  CSSObjectWithLabel,
   FocusDirection,
   GetOptionLabel,
   GetOptionValue,
@@ -741,7 +742,44 @@ const sameEpochValue = (a: unknown, b: unknown) =>
 const sameEpoch = (a: readonly unknown[], b: readonly unknown[]) =>
   a.length === b.length && a.every((value, i) => sameEpochValue(value, b[i]));
 
+/**
+ * Structural equality for style objects: plain objects and arrays compared
+ * recursively, everything else by identity. Two equal style objects make
+ * emotion produce the same class name and the same CSS.
+ */
+function deepEqualStyles(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (
+    typeof a !== 'object' ||
+    typeof b !== 'object' ||
+    a === null ||
+    b === null ||
+    Array.isArray(a) !== Array.isArray(b)
+  ) {
+    return false;
+  }
+  const aKeys = Object.keys(a);
+  if (aKeys.length !== Object.keys(b).length) return false;
+  for (let i = 0; i < aKeys.length; i++) {
+    const key = aKeys[i];
+    if (
+      !Object.prototype.hasOwnProperty.call(b, key) ||
+      !deepEqualStyles((a as any)[key], (b as any)[key])
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+interface ComputedOptionStyles {
+  css: unknown;
+  classNames: string | undefined;
+}
+
 interface CachedOptionElement<Option> {
+  /** Styles the element was rendered with (styled mode only). */
+  styles?: ComputedOptionStyles;
   element: ReactElement;
   data: Option;
   isDisabled: boolean;
@@ -795,8 +833,15 @@ export default class Select<
   // of them. See getOptionElementEpoch for what invalidates the cache.
   optionElementCache: {
     epoch: readonly unknown[];
+    verifyGate: readonly unknown[] | null;
     elements: Map<string, CachedOptionElement<Option>>;
   } | null = null;
+
+  // Option styles computed in renderMenu while verifying cached elements,
+  // keyed by option element id. getStyles/getClassNames hand them to the
+  // Option that renders in the same pass, so the user's styles.option and
+  // classNames.option run once per option per render, as upstream.
+  pendingOptionStyles: Map<string, ComputedOptionStyles> | null = null;
 
   // Refs
   // ------------------------------
@@ -1332,6 +1377,8 @@ export default class Select<
     key: Key,
     props: StylesProps<Option, IsMulti, Group>[Key]
   ) => {
+    const pending = this.getPendingOptionStyles(key, props);
+    if (pending) return pending.css as CSSObjectWithLabel;
     const { unstyled } = this.props;
     const base = defaultStyles[key](props as any, unstyled);
     base.boxSizing = 'border-box';
@@ -1341,7 +1388,18 @@ export default class Select<
   getClassNames = <Key extends keyof StylesProps<Option, IsMulti, Group>>(
     key: Key,
     props: StylesProps<Option, IsMulti, Group>[Key]
-  ) => this.props.classNames[key]?.(props as any);
+  ) => {
+    const pending = this.getPendingOptionStyles(key, props);
+    if (pending) return pending.classNames;
+    return this.props.classNames[key]?.(props as any);
+  };
+  getPendingOptionStyles(key: string, props: unknown) {
+    if (key !== 'option' || !this.pendingOptionStyles) return undefined;
+    const innerProps = (props as { innerProps?: { id?: string } }).innerProps;
+    return innerProps && innerProps.id
+      ? this.pendingOptionStyles.get(innerProps.id)
+      : undefined;
+  }
   getElementId = (
     element:
       | 'group'
@@ -2108,21 +2166,47 @@ export default class Select<
   getOptionElementEpoch(Option: unknown): readonly unknown[] {
     const { props } = this;
     const { isAppleDevice: appleDevice, selectValue } = this.state;
-    const defaultRendering =
+    const defaultMarkup =
       Option === DefaultOptionComponent &&
-      typeof props.formatOptionLabel !== 'function' &&
-      !(props.styles && props.styles.option) &&
-      !(props.classNames && props.classNames.option);
-    return defaultRendering
-      ? [
-          'default',
-          Option,
-          props.theme,
-          props.unstyled,
-          props.classNamePrefix,
-          appleDevice,
-        ]
-      : ['props', Option, props, selectValue, appleDevice];
+      typeof props.formatOptionLabel !== 'function';
+    const customOptionStyles =
+      !!(props.styles && props.styles.option) ||
+      !!(props.classNames && props.classNames.option);
+    if (defaultMarkup && !customOptionStyles) {
+      return [
+        'default',
+        Option,
+        props.theme,
+        props.unstyled,
+        props.classNamePrefix,
+        appleDevice,
+      ];
+    }
+    // 'styled': default markup, user styles. On a prop change, cached elements
+    // are verified by recomputing their styles (see getStyledVerifyGate).
+    return [
+      defaultMarkup ? 'styled' : 'props',
+      Option,
+      props,
+      selectValue,
+      appleDevice,
+    ];
+  }
+
+  /**
+   * In 'styled' mode the default Option's output is fully determined by the
+   * option's fields and flags, the computed style object, the user's option
+   * classNames, `classNamePrefix` and isAppleDevice. So when the epoch
+   * changes, a cached element can still be reused if those match, which is
+   * checked by computing the styles again (as rendering would) and comparing.
+   */
+  getStyledVerifyGate(Option: unknown): readonly unknown[] {
+    return [
+      'styled',
+      Option,
+      this.props.classNamePrefix,
+      this.state.isAppleDevice,
+    ];
   }
 
   renderMenu() {
@@ -2162,35 +2246,46 @@ export default class Select<
     }
 
     const epoch = this.getOptionElementEpoch(Option);
+    const styled = epoch[0] === 'styled';
+    const verifyGate = styled ? this.getStyledVerifyGate(Option) : null;
     const previousCache = this.optionElementCache;
     const canReuse =
       previousCache !== null && sameEpoch(previousCache.epoch, epoch);
-    const previousElements = canReuse ? previousCache!.elements : null;
-    // A default-rendering epoch survives keystrokes, so keep elements for
+    const canVerify =
+      !canReuse &&
+      styled &&
+      previousCache !== null &&
+      previousCache.epoch[0] === 'styled' &&
+      sameEpoch(previousCache.verifyGate!, verifyGate!);
+    const previousElements =
+      canReuse || canVerify ? previousCache!.elements : null;
+    // Default and styled epochs outlive keystrokes, so keep elements for
     // options that are currently filtered out: deleting characters brings them
-    // back without recomputing their styles. Bounded by the number of options.
+    // back without re-rendering them. Bounded by the number of options.
     const nextElements =
-      previousElements && epoch[0] === 'default'
+      previousElements && (epoch[0] === 'default' || styled)
         ? previousElements
         : new Map<string, CachedOptionElement<Option>>();
-    this.optionElementCache = { epoch, elements: nextElements };
+    this.optionElementCache = { epoch, verifyGate, elements: nextElements };
+    const pendingOptionStyles = new Map<string, ComputedOptionStyles>();
+    this.pendingOptionStyles = styled ? pendingOptionStyles : null;
 
     // TODO: Internal Option Type here
     const render = (props: CategorizedOption<Option>, id: string) => {
       const { type, data, isDisabled, isSelected, label, value } = props;
       const isFocused = focusedOption === data;
       const cached = previousElements && previousElements.get(id);
-      if (
-        cached &&
+      const sameOption =
+        !!cached &&
         cached.data === data &&
         cached.isFocused === isFocused &&
         cached.isDisabled === isDisabled &&
         cached.isSelected === isSelected &&
         cached.label === label &&
-        cached.value === value
-      ) {
-        nextElements.set(id, cached);
-        return cached.element;
+        cached.value === value;
+      if (sameOption && canReuse) {
+        nextElements.set(id, cached!);
+        return cached!.element;
       }
       const onHover = isDisabled ? undefined : () => this.onOptionHover(data);
       const onSelect = isDisabled ? undefined : () => this.selectOption(data);
@@ -2205,6 +2300,41 @@ export default class Select<
         'aria-selected': this.state.isAppleDevice ? undefined : isSelected, // is not supported on Apple devices
       };
 
+      const innerRef = isFocused ? this.getFocusedOptionRef : undefined;
+
+      let styles: ComputedOptionStyles | undefined;
+      if (styled) {
+        // Compute the styles exactly as the Option would while rendering.
+        // `children` is the default label, which equals `label`.
+        const optionProps = {
+          ...commonProps,
+          innerProps,
+          data,
+          isDisabled,
+          isSelected,
+          label,
+          type,
+          value,
+          isFocused,
+          innerRef,
+          children: label,
+        };
+        styles = {
+          css: this.getStyles('option', optionProps),
+          classNames: this.getClassNames('option', optionProps),
+        };
+        if (
+          sameOption &&
+          cached!.styles &&
+          cached!.styles.classNames === styles.classNames &&
+          deepEqualStyles(cached!.styles.css, styles.css)
+        ) {
+          nextElements.set(id, cached!);
+          return cached!.element;
+        }
+        pendingOptionStyles.set(optionId, styles);
+      }
+
       const element = (
         <Option
           {...commonProps}
@@ -2217,12 +2347,13 @@ export default class Select<
           type={type}
           value={value}
           isFocused={isFocused}
-          innerRef={isFocused ? this.getFocusedOptionRef : undefined}
+          innerRef={innerRef}
         >
           {this.formatOptionLabel(props.data, 'menu')}
         </Option>
       );
       nextElements.set(id, {
+        styles,
         element,
         data,
         isDisabled,
