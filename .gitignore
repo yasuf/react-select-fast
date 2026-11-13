@@ -47,3 +47,7 @@ magical-types
 # benchmark build output
 bench/bench.js
 bench/upstream/
+bench/bench-react19.js
+compat/*/node_modules/
+compat/.result-*.json
+!compat/*/package-lock.json

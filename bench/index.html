@@ -1,3 +1,18 @@
 <!doctype html>
-<html><head><meta charset="utf-8"><title>react-select-fast bench</title></head>
-<body><p id="status">loading</p><div id="stage"></div><script src="bench.js"></script></body></html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>react-select-fast bench</title>
+  </head>
+  <body>
+    <p id="status">loading</p>
+    <div id="stage"></div>
+    <script>
+      // ?react=19 loads the React 19 build; default is React 16.
+      var r = new URLSearchParams(location.search).get('react');
+      var s = document.createElement('script');
+      s.src = r === '19' ? 'bench-react19.js' : 'bench.js';
+      document.body.appendChild(s);
+    </script>
+  </body>
+</html>

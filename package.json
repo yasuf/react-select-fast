@@ -86,7 +86,8 @@
     "version-packages": "changeset version",
     "release": "yarn build && changeset publish",
     "bench:build": "sh bench/build.sh",
-    "bench:serve": "node bench/serve.mjs"
+    "bench:serve": "node bench/serve.mjs",
+    "test:compat": "sh compat/run.sh"
   },
   "files": [
     "dist",

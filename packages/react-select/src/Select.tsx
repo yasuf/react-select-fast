@@ -486,10 +486,13 @@ function buildFocusableOptionsWithIds<Option, Group extends GroupBase<Option>>(
 // Categorizing options runs every user callback (filterOption, getOptionLabel,
 // getOptionValue, isOptionDisabled, isOptionSelected) over every option. The
 // upstream implementation recomputed it 3-5 times per render, and again on
-// every hover. The result depends only on the props object and selectValue, so
-// cache it by the identity of both: any parent re-render produces a new props
-// object (a guaranteed miss), while internal state updates such as hovering or
-// keyboard focus reuse the result.
+// every hover. The result is a pure function of the props and selectValue, so
+// cache it until either changes. Props are compared shallowly rather than by
+// identity: React 19 resolves class defaultProps on every render, so even a
+// state-only update (hover, keyboard focus) gets a fresh props object.
+//
+// Entries are keyed by the `options` array, which is normally stable across
+// renders. An inline options array simply misses, as it would change anyway.
 
 interface DerivedOptions<Option, Group extends GroupBase<Option>> {
   selectValue: Options<Option>;
@@ -498,7 +501,28 @@ interface DerivedOptions<Option, Group extends GroupBase<Option>> {
   withIds?: { optionId: string; value: FocusableOptionWithId<Option>[] };
 }
 
-const derivedOptionsCache = new WeakMap<object, DerivedOptions<any, any>>();
+interface DerivedOptionsEntry {
+  props: object;
+  derived: DerivedOptions<any, any>;
+}
+
+const derivedOptionsCache = new WeakMap<object, DerivedOptionsEntry>();
+
+const hasOwn = Object.prototype.hasOwnProperty;
+
+/** True when both objects have the same own keys with identical values. */
+function shallowEqualObjects(a: object, b: object): boolean {
+  if (a === b) return true;
+  const aKeys = Object.keys(a);
+  if (aKeys.length !== Object.keys(b).length) return false;
+  for (let i = 0; i < aKeys.length; i++) {
+    const key = aKeys[i];
+    if (!hasOwn.call(b, key) || !Object.is((a as any)[key], (b as any)[key])) {
+      return false;
+    }
+  }
+  return true;
+}
 
 function getDerivedOptions<
   Option,
@@ -508,13 +532,20 @@ function getDerivedOptions<
   props: Props<Option, IsMulti, Group>,
   selectValue: Options<Option>
 ): DerivedOptions<Option, Group> {
-  const cached = derivedOptionsCache.get(props);
-  if (cached && cached.selectValue === selectValue) return cached;
+  const entry = derivedOptionsCache.get(props.options);
+  if (
+    entry &&
+    entry.derived.selectValue === selectValue &&
+    shallowEqualObjects(entry.props, props)
+  ) {
+    entry.props = props;
+    return entry.derived;
+  }
   const derived: DerivedOptions<Option, Group> = {
     selectValue,
     categorized: buildCategorizedOptions(props, selectValue),
   };
-  derivedOptionsCache.set(props, derived);
+  derivedOptionsCache.set(props.options, { props, derived });
   return derived;
 }
 
@@ -694,8 +725,21 @@ const shouldHideSelectedOptions = <
 
 let instanceId = 1;
 
+// Epoch slots are compared by identity, except plain objects (the props
+// object, an object `theme`), which are compared shallowly. See
+// getOptionElementEpoch.
+const sameEpochValue = (a: unknown, b: unknown) =>
+  Object.is(a, b) ||
+  (typeof a === 'object' &&
+    typeof b === 'object' &&
+    a !== null &&
+    b !== null &&
+    !Array.isArray(a) &&
+    !Array.isArray(b) &&
+    shallowEqualObjects(a, b));
+
 const sameEpoch = (a: readonly unknown[], b: readonly unknown[]) =>
-  a.length === b.length && a.every((value, i) => value === b[i]);
+  a.length === b.length && a.every((value, i) => sameEpochValue(value, b[i]));
 
 interface CachedOptionElement<Option> {
   element: ReactElement;
@@ -2058,8 +2102,8 @@ export default class Select<
    * styles or classNames from the user, an option's output depends only on
    * the theme, `unstyled`, `classNamePrefix` and isAppleDevice, so the cache
    * survives prop changes such as typing. Otherwise the rendering may read
-   * any prop (e.g. `selectProps.inputValue`), so the epoch is the props object
-   * itself, which every parent re-render replaces.
+   * any prop (e.g. `selectProps.inputValue`), so the epoch is the props
+   * object itself, compared shallowly: changing any prop invalidates it.
    */
   getOptionElementEpoch(Option: unknown): readonly unknown[] {
     const { props } = this;

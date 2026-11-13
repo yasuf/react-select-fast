@@ -1,0 +1,11 @@
+{
+  "name": "react-select-fast-compat-react18",
+  "private": true,
+  "description": "Pinned React 18 toolchain for the compat test matrix (see compat/run.sh)",
+  "dependencies": {
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "@testing-library/react": "14.3.1",
+    "@testing-library/dom": "9.3.4"
+  }
+}

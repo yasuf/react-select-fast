@@ -1,0 +1,11 @@
+{
+  "name": "react-select-fast-compat-react17",
+  "private": true,
+  "description": "Pinned React 17 toolchain for the compat test matrix (see compat/run.sh)",
+  "dependencies": {
+    "react": "17.0.2",
+    "react-dom": "17.0.2",
+    "@testing-library/react": "12.1.5",
+    "@testing-library/dom": "8.20.1"
+  }
+}

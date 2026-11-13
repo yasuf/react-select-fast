@@ -1,10 +1,15 @@
 // Side-by-side benchmark: stock react-select (git HEAD source) vs react-select-fast.
 // Both are bundled into one page and run alternately so they share conditions.
-// Each measurement is the synchronous time of dispatching a real DOM event
-// (React 16 renders and commits synchronously inside its event handlers), plus
-// a forced layout so style recalculation is included.
+// Each measurement is the time from dispatching a real DOM event until React
+// has committed (we wait one macrotask, which covers React 18+'s microtask and
+// scheduler flushes; React 16/17 commit synchronously), plus a forced layout
+// so style recalculation is included.
+//
+// `bench-root` is aliased at build time to root-legacy.tsx (React 16) or
+// root-concurrent.tsx (React 19); see build.sh.
 import React from 'react';
-import ReactDOM from 'react-dom';
+// @ts-ignore resolved by the bundler alias
+import { mount as mountRoot, reactVersion } from 'bench-root';
 import UpstreamSelect from './upstream/packages/react-select/src/index';
 import FastSelect from '../packages/react-select/src/index';
 
@@ -67,9 +72,17 @@ const setInputValue = (input: HTMLInputElement, value: string) => {
   input.dispatchEvent(new Event('input', { bubbles: true }));
 };
 
-const timed = (fn: () => void) => {
+const channel = new MessageChannel();
+const macrotask = () =>
+  new Promise<void>((resolve) => {
+    channel.port1.onmessage = () => resolve();
+    channel.port2.postMessage(null);
+  });
+
+const timed = async (fn: () => void) => {
   const t0 = now();
   fn();
+  await macrotask();
   forceLayout();
   return now() - t0;
 };
@@ -87,15 +100,20 @@ const CUSTOM_STYLES = {
   option: (base: object) => ({ ...base, letterSpacing: '0.01em' }),
 };
 
-function runOnce(impl: ImplName, n: number, customStyles = false): Result {
+async function runOnce(
+  impl: ImplName,
+  n: number,
+  customStyles = false
+): Promise<Result> {
   const Select = IMPLS[impl] as any;
   const host = document.createElement('div');
   host.style.width = '400px';
   document.getElementById('stage')!.appendChild(host);
   const options = makeOptions(n);
 
-  const mount = timed(() =>
-    ReactDOM.render(
+  let unmount = () => {};
+  const mount = await timed(() => {
+    unmount = mountRoot(
       <Select
         options={options}
         menuIsOpen
@@ -104,15 +122,15 @@ function runOnce(impl: ImplName, n: number, customStyles = false): Result {
         styles={customStyles ? CUSTOM_STYLES : undefined}
       />,
       host
-    )
-  );
+    );
+  });
 
   // Hover: move the pointer across 40 consecutive options.
   const optionEls = host.querySelectorAll('.rs__option');
   const hovers: number[] = [];
   for (let i = 0; i < 40; i++) {
     hovers.push(
-      timed(() =>
+      await timed(() =>
         optionEls[i].dispatchEvent(
           new MouseEvent('mouseover', { bubbles: true })
         )
@@ -125,7 +143,7 @@ function runOnce(impl: ImplName, n: number, customStyles = false): Result {
   const keys: number[] = [];
   for (let i = 0; i < 40; i++) {
     keys.push(
-      timed(() =>
+      await timed(() =>
         input.dispatchEvent(
           new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })
         )
@@ -152,10 +170,10 @@ function runOnce(impl: ImplName, n: number, customStyles = false): Result {
     '',
   ];
   for (const value of sequence) {
-    typing.push(timed(() => setInputValue(input, value)));
+    typing.push(await timed(() => setInputValue(input, value)));
   }
 
-  ReactDOM.unmountComponentAtNode(host);
+  unmount();
   host.remove();
   return {
     mount,
@@ -168,13 +186,13 @@ function runOnce(impl: ImplName, n: number, customStyles = false): Result {
 async function runBench(n: number, rounds = 5, customStyles = false) {
   const results: Record<ImplName, Result[]> = { upstream: [], fast: [] };
   // warm up JIT for both
-  runOnce('upstream', Math.min(n, 200), customStyles);
-  runOnce('fast', Math.min(n, 200), customStyles);
+  await runOnce('upstream', Math.min(n, 200), customStyles);
+  await runOnce('fast', Math.min(n, 200), customStyles);
   for (let r = 0; r < rounds; r++) {
     const order: ImplName[] =
       r % 2 ? ['fast', 'upstream'] : ['upstream', 'fast'];
     for (const impl of order) {
-      results[impl].push(runOnce(impl, n, customStyles));
+      results[impl].push(await runOnce(impl, n, customStyles));
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
   }
@@ -185,6 +203,7 @@ async function runBench(n: number, rounds = 5, customStyles = false) {
     typing: median(rs.map((r) => r.typing)),
   });
   return {
+    react: reactVersion,
     n,
     upstream: summarize(results.upstream),
     fast: summarize(results.fast),

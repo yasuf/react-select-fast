@@ -167,7 +167,7 @@ describe('option rendering', () => {
     ).toBe('1');
   });
 
-  test('any prop change re-renders every option', () => {
+  test('with a custom Option, any prop change re-renders every option', () => {
     const { CountingOption, renders } = countingOption();
     const props = {
       ...MENU_OPEN_PROPS,
@@ -176,10 +176,22 @@ describe('option rendering', () => {
     };
     const { rerender } = render(<Select {...props} />);
     renders.clear();
-    // Same values, new props object: options must not be served stale, since
-    // callbacks like formatOptionLabel may close over changed outer state.
-    rerender(<Select {...props} />);
+    // A custom Option may read any prop through selectProps.
+    rerender(<Select {...props} name="changed" />);
     expect(renders.size).toBe(OPTIONS.length);
+  });
+
+  test('a re-render with shallow-equal props re-renders no options', () => {
+    const { CountingOption, renders } = countingOption();
+    const props = {
+      ...MENU_OPEN_PROPS,
+      options: OPTIONS,
+      components: { Option: CountingOption },
+    };
+    const { rerender } = render(<Select {...props} />);
+    renders.clear();
+    rerender(<Select {...props} />);
+    expect(renders.size).toBe(0);
   });
 
   test('changing formatOptionLabel output is reflected', () => {
