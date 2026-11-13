@@ -51,3 +51,4 @@ bench/bench-react19.js
 compat/*/node_modules/
 compat/.result-*.json
 !compat/*/package-lock.json
+demo/demo.js

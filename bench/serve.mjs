@@ -1,12 +1,18 @@
-// Minimal static server for the benchmark page: node bench/serve.mjs [port]
+// Minimal static server: node bench/serve.mjs [port] [dir]
+// dir defaults to bench/ (relative paths resolve from the repo root).
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
-import { join, extname, dirname } from 'node:path';
+import { join, extname, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const root = dirname(fileURLToPath(import.meta.url));
+const here = dirname(fileURLToPath(import.meta.url));
+const root = process.argv[3] ? resolve(here, '..', process.argv[3]) : here;
 const port = Number(process.argv[2] || 5199);
-const types = { '.html': 'text/html', '.js': 'text/javascript' };
+const types = {
+  '.html': 'text/html',
+  '.js': 'text/javascript',
+  '.css': 'text/css',
+};
 
 createServer(async (req, res) => {
   const path = new URL(req.url, 'http://x').pathname;

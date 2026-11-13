@@ -31,6 +31,16 @@ A custom `Option` component or `formatOptionLabel` makes typing re-render every 
 
 On React 19, at 5,000 options with default option rendering: hover 49 → 1.6 ms, ArrowDown 50 → 3.5 ms, typing 54 → 13 ms. Styled mode hasn't been benchmarked on React 19 yet. (Open the bench at `?react=19`.)
 
+## Demo
+
+```sh
+yarn demo    # builds demo/ and serves it at http://127.0.0.1:5200/
+```
+
+The two libraries run side by side on React 19, with the same options and the same main thread. Hover the lists, use the arrow keys, or type. Each panel times every interaction from the input event until React has committed and laid out, and shows the median, p95 and a bar per interaction (both panels use the same 0–100 ms scale). **Run script** plays the same 110-step interaction (hover sweep, arrow keys, typing) one step per frame, and **Race both** runs it on each panel and compares wall-clock time. The main-thread graph at the top shows dropped frames. Switch the option count (1k–20k) and default vs custom `styles.option` at the top.
+
+Keep the tab in the foreground: browsers pause animation frames and throttle background tabs, which distorts the numbers.
+
 ## What changed
 
 All changes are in `packages/react-select/src`:

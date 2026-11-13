@@ -87,7 +87,9 @@
     "release": "yarn build && changeset publish",
     "bench:build": "sh bench/build.sh",
     "bench:serve": "node bench/serve.mjs",
-    "test:compat": "sh compat/run.sh"
+    "test:compat": "sh compat/run.sh",
+    "demo:build": "sh demo/build.sh",
+    "demo": "sh demo/build.sh && node bench/serve.mjs 5200 demo"
   },
   "files": [
     "dist",
