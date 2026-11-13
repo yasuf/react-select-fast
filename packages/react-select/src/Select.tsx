@@ -42,6 +42,7 @@ import {
 } from './builtins';
 
 import { defaultComponents, SelectComponentsConfig } from './components/index';
+import DefaultOptionComponent from './components/Option';
 
 import {
   ClassNamesConfig,
@@ -693,6 +694,9 @@ const shouldHideSelectedOptions = <
 
 let instanceId = 1;
 
+const sameEpoch = (a: readonly unknown[], b: readonly unknown[]) =>
+  a.length === b.length && a.every((value, i) => value === b[i]);
+
 interface CachedOptionElement<Option> {
   element: ReactElement;
   data: Option;
@@ -741,17 +745,12 @@ export default class Select<
   scrollToFocusedOptionOnUpdate = false;
   userIsDragging?: boolean;
 
-  // Rendered Option elements from the previous render, reused when nothing an
-  // option depends on has changed. Returning the identical element lets React
-  // skip re-rendering it, so moving focus across a long menu re-renders two
-  // options instead of all of them. Everything an option element is built
-  // from derives from the props object, selectValue, isAppleDevice and the
-  // Option component (the "epoch"), plus the option's own fields and focus.
+  // Rendered Option elements, reused when nothing an option depends on has
+  // changed. Returning the identical element lets React skip re-rendering it,
+  // so moving focus across a long menu re-renders two options instead of all
+  // of them. See getOptionElementEpoch for what invalidates the cache.
   optionElementCache: {
-    props: unknown;
-    selectValue: unknown;
-    isAppleDevice: boolean;
-    Option: unknown;
+    epoch: readonly unknown[];
     elements: Map<string, CachedOptionElement<Option>>;
   } | null = null;
 
@@ -2050,6 +2049,38 @@ export default class Select<
       />
     );
   }
+  /**
+   * Everything an Option element is built from, besides the option's own
+   * fields and focus state. Cached elements are reused only while this is
+   * unchanged.
+   *
+   * With the default Option component, default label rendering and no option
+   * styles or classNames from the user, an option's output depends only on
+   * the theme, `unstyled`, `classNamePrefix` and isAppleDevice, so the cache
+   * survives prop changes such as typing. Otherwise the rendering may read
+   * any prop (e.g. `selectProps.inputValue`), so the epoch is the props object
+   * itself, which every parent re-render replaces.
+   */
+  getOptionElementEpoch(Option: unknown): readonly unknown[] {
+    const { props } = this;
+    const { isAppleDevice: appleDevice, selectValue } = this.state;
+    const defaultRendering =
+      Option === DefaultOptionComponent &&
+      typeof props.formatOptionLabel !== 'function' &&
+      !(props.styles && props.styles.option) &&
+      !(props.classNames && props.classNames.option);
+    return defaultRendering
+      ? [
+          'default',
+          Option,
+          props.theme,
+          props.unstyled,
+          props.classNamePrefix,
+          appleDevice,
+        ]
+      : ['props', Option, props, selectValue, appleDevice];
+  }
+
   renderMenu() {
     const {
       Group,
@@ -2086,23 +2117,19 @@ export default class Select<
       return null;
     }
 
-    const { selectValue, isAppleDevice: appleDevice } = this.state;
+    const epoch = this.getOptionElementEpoch(Option);
     const previousCache = this.optionElementCache;
     const canReuse =
-      previousCache !== null &&
-      previousCache.props === this.props &&
-      previousCache.selectValue === selectValue &&
-      previousCache.isAppleDevice === appleDevice &&
-      previousCache.Option === Option;
+      previousCache !== null && sameEpoch(previousCache.epoch, epoch);
     const previousElements = canReuse ? previousCache!.elements : null;
-    const nextElements = new Map<string, CachedOptionElement<Option>>();
-    this.optionElementCache = {
-      props: this.props,
-      selectValue,
-      isAppleDevice: appleDevice,
-      Option,
-      elements: nextElements,
-    };
+    // A default-rendering epoch survives keystrokes, so keep elements for
+    // options that are currently filtered out: deleting characters brings them
+    // back without recomputing their styles. Bounded by the number of options.
+    const nextElements =
+      previousElements && epoch[0] === 'default'
+        ? previousElements
+        : new Map<string, CachedOptionElement<Option>>();
+    this.optionElementCache = { epoch, elements: nextElements };
 
     // TODO: Internal Option Type here
     const render = (props: CategorizedOption<Option>, id: string) => {

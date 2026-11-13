@@ -81,7 +81,13 @@ interface Result {
   typing: number;
 }
 
-function runOnce(impl: ImplName, n: number): Result {
+// A custom styles.option forces react-select-fast onto its conservative path,
+// where any prop change (e.g. typing) re-renders every visible option.
+const CUSTOM_STYLES = {
+  option: (base: object) => ({ ...base, letterSpacing: '0.01em' }),
+};
+
+function runOnce(impl: ImplName, n: number, customStyles = false): Result {
   const Select = IMPLS[impl] as any;
   const host = document.createElement('div');
   host.style.width = '400px';
@@ -95,6 +101,7 @@ function runOnce(impl: ImplName, n: number): Result {
         menuIsOpen
         classNamePrefix="rs"
         maxMenuHeight={300}
+        styles={customStyles ? CUSTOM_STYLES : undefined}
       />,
       host
     )
@@ -158,16 +165,16 @@ function runOnce(impl: ImplName, n: number): Result {
   };
 }
 
-async function runBench(n: number, rounds = 5) {
+async function runBench(n: number, rounds = 5, customStyles = false) {
   const results: Record<ImplName, Result[]> = { upstream: [], fast: [] };
   // warm up JIT for both
-  runOnce('upstream', Math.min(n, 200));
-  runOnce('fast', Math.min(n, 200));
+  runOnce('upstream', Math.min(n, 200), customStyles);
+  runOnce('fast', Math.min(n, 200), customStyles);
   for (let r = 0; r < rounds; r++) {
     const order: ImplName[] =
       r % 2 ? ['fast', 'upstream'] : ['upstream', 'fast'];
     for (const impl of order) {
-      results[impl].push(runOnce(impl, n));
+      results[impl].push(runOnce(impl, n, customStyles));
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
   }

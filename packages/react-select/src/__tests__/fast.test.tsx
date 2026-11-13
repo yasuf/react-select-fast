@@ -9,6 +9,9 @@ import { OptionProps } from '../components/Option';
 import { createFilter } from '../filters';
 import { createFilter as upstreamCreateFilter } from './_upstream/filters';
 import { OPTIONS, OPTIONS_ACCENTED, Option } from './constants';
+import { matchers } from '@emotion/jest';
+
+expect.extend(matchers);
 
 // ==============================
 // Filter equivalence
@@ -238,5 +241,93 @@ describe('filter callbacks', () => {
     fireEvent.mouseOver(options[options.length - 1]);
     // upstream: 4 passes (hover handler + 3 in render)
     expect(filterOption).not.toHaveBeenCalled();
+  });
+});
+
+describe('default option rendering across prop changes', () => {
+  const optionTexts = (container: HTMLElement) =>
+    Array.from(container.querySelectorAll('.react-select__option')).map(
+      (el) => el.textContent
+    );
+
+  test('typing does not re-render options that stay visible', () => {
+    const getOptionLabel = jest.fn((o: Option) => o.label);
+    const props = { ...MENU_OPEN_PROPS, options: OPTIONS, getOptionLabel };
+    const { container, rerender } = render(<Select {...props} />);
+
+    getOptionLabel.mockClear();
+    rerender(<Select {...props} inputValue="e" />);
+    const visible = optionTexts(container).length;
+    expect(visible).toBeGreaterThan(1);
+    // One call per option for filtering, plus 2 for the newly focused first
+    // match (its re-render and the live region announcement). Upstream also
+    // re-rendered every visible option, calling it once more for each.
+    expect(getOptionLabel).toHaveBeenCalledTimes(OPTIONS.length + 2);
+  });
+
+  test('deleting characters restores options in the original order', () => {
+    const props = { ...MENU_OPEN_PROPS, options: OPTIONS };
+    const { container, rerender } = render(<Select {...props} />);
+    const all = optionTexts(container);
+    rerender(<Select {...props} inputValue="tw" />);
+    expect(optionTexts(container)).toEqual(['2', '12']);
+    rerender(<Select {...props} inputValue="t" />);
+    rerender(<Select {...props} inputValue="" />);
+    expect(optionTexts(container)).toEqual(all);
+  });
+
+  test('classNamePrefix changes are applied to cached options', () => {
+    const props = { ...MENU_OPEN_PROPS, options: OPTIONS };
+    const { container, rerender } = render(<Select {...props} />);
+    rerender(<Select {...props} classNamePrefix="other" />);
+    expect(container.querySelectorAll('.other__option')).toHaveLength(
+      OPTIONS.length
+    );
+    expect(container.querySelector('.react-select__option')).toBeNull();
+  });
+
+  test('adding styles.option later is applied', () => {
+    const props = { ...MENU_OPEN_PROPS, options: OPTIONS };
+    const { container, rerender } = render(<Select {...props} />);
+    rerender(
+      <Select
+        {...props}
+        styles={{ option: (base) => ({ ...base, color: 'red' }) }}
+      />
+    );
+    expect(container.querySelector('.react-select__option')).toHaveStyleRule(
+      'color',
+      'red'
+    );
+  });
+
+  test('a new theme is applied', () => {
+    const props = { ...MENU_OPEN_PROPS, options: OPTIONS, value: OPTIONS[0] };
+    const { container, rerender } = render(<Select {...props} />);
+    rerender(
+      <Select
+        {...props}
+        theme={(theme) => ({
+          ...theme,
+          colors: { ...theme.colors, primary: 'hotpink' },
+        })}
+      />
+    );
+    expect(
+      container.querySelector('.react-select__option--is-selected')
+    ).toHaveStyleRule('background-color', 'hotpink');
+  });
+
+  test('unstyled toggles are applied', () => {
+    const props = { ...MENU_OPEN_PROPS, options: OPTIONS };
+    const { container, rerender } = render(<Select {...props} />);
+    expect(container.querySelector('.react-select__option')).toHaveStyleRule(
+      'padding',
+      '8px 12px'
+    );
+    rerender(<Select {...props} unstyled />);
+    expect(
+      container.querySelector('.react-select__option')
+    ).not.toHaveStyleRule('padding', expect.anything());
   });
 });
