@@ -3,12 +3,11 @@
   "private": true,
   "version": "1.0.0",
   "description": "A Select control built with and for ReactJS",
-  "author": "Jed Watson",
+  "author": "Yasu Flores",
+  "contributors": [
+    "Jed Watson (original react-select author)"
+  ],
   "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/JedWatson/react-select.git"
-  },
   "dependencies": {
     "@babel/core": "^7.19.6",
     "@babel/plugin-proposal-class-properties": "^7.12.1",

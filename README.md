@@ -2,6 +2,8 @@
 
 A fork of [react-select](https://github.com/JedWatson/react-select) 5.10.2 with the same API and the same output, but far less render work on large menus.
 
+This project is inspired by, and built on, the original react-select by Jed Watson and its contributors. Its API, components and design are theirs; this fork only changes how much work it does. react-select-fast is an independent, unofficial fork and is not affiliated with or endorsed by the react-select maintainers. For anything not about performance, the [original project](https://github.com/JedWatson/react-select) is the place to go.
+
 It's a drop-in replacement. Props, `components` overrides, `styles`, `classNames`, class names (including emotion hashes), ARIA messages, ref instance fields and `onChange` action metadata are all unchanged. The full upstream test suite (255 tests, 5 snapshots) passes unmodified on React 16. On React 17, 18 and 19 the fork passes every upstream test that stock react-select passes; see [React versions](#react-versions).
 
 ```sh
@@ -93,4 +95,4 @@ yarn bench:build && yarn bench:serve        # open http://127.0.0.1:5199/ (or ?r
 - **Opt-in virtualization** for 10k+ options. Mount time and clearing the input still create one DOM node per option, which bounds both.
 - A custom `Option` component or `formatOptionLabel` still re-renders every visible option on each keystroke. That can't be avoided without knowing what the custom code reads.
 
-Original README: [UPSTREAM_README.md](UPSTREAM_README.md). MIT, same as upstream.
+Original README: [UPSTREAM_README.md](UPSTREAM_README.md). MIT, same as upstream; [LICENSE](LICENSE) keeps the original copyright notice alongside the fork's.

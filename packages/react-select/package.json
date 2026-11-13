@@ -6,7 +6,10 @@
   "module": "dist/react-select.esm.js",
   "types": "dist/react-select.cjs.d.ts",
   "sideEffects": false,
-  "author": "Jed Watson",
+  "author": "Yasu Flores",
+  "contributors": [
+    "Jed Watson (original react-select author)"
+  ],
   "license": "MIT",
   "dependencies": {
     "@babel/runtime": "^7.12.0",
