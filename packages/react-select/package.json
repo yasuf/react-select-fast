@@ -1,14 +1,13 @@
 {
-  "name": "react-select",
-  "version": "5.10.2",
-  "description": "A Select control built with and for ReactJS",
+  "name": "react-select-fast",
+  "version": "5.10.2-fast.0",
+  "description": "Drop-in, API-identical react-select with far less render work on large menus",
   "main": "dist/react-select.cjs.js",
   "module": "dist/react-select.esm.js",
   "types": "dist/react-select.cjs.d.ts",
   "sideEffects": false,
   "author": "Jed Watson",
   "license": "MIT",
-  "repository": "https://github.com/JedWatson/react-select/tree/master/packages/react-select",
   "dependencies": {
     "@babel/runtime": "^7.12.0",
     "@emotion/cache": "^11.4.0",

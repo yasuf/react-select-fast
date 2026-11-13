@@ -7,6 +7,7 @@ import {
   JSX,
   KeyboardEventHandler,
   MouseEventHandler,
+  ReactElement,
   ReactNode,
   RefCallback,
   TouchEventHandler,
@@ -477,14 +478,84 @@ function buildFocusableOptionsWithIds<Option, Group extends GroupBase<Option>>(
   );
 }
 
-function buildFocusableOptions<
+// ==============================
+// Derived option cache
+// ==============================
+//
+// Categorizing options runs every user callback (filterOption, getOptionLabel,
+// getOptionValue, isOptionDisabled, isOptionSelected) over every option. The
+// upstream implementation recomputed it 3-5 times per render, and again on
+// every hover. The result depends only on the props object and selectValue, so
+// cache it by the identity of both: any parent re-render produces a new props
+// object (a guaranteed miss), while internal state updates such as hovering or
+// keyboard focus reuse the result.
+
+interface DerivedOptions<Option, Group extends GroupBase<Option>> {
+  selectValue: Options<Option>;
+  categorized: CategorizedGroupOrOption<Option, Group>[];
+  focusable?: Option[];
+  withIds?: { optionId: string; value: FocusableOptionWithId<Option>[] };
+}
+
+const derivedOptionsCache = new WeakMap<object, DerivedOptions<any, any>>();
+
+function getDerivedOptions<
+  Option,
+  IsMulti extends boolean,
+  Group extends GroupBase<Option>
+>(
+  props: Props<Option, IsMulti, Group>,
+  selectValue: Options<Option>
+): DerivedOptions<Option, Group> {
+  const cached = derivedOptionsCache.get(props);
+  if (cached && cached.selectValue === selectValue) return cached;
+  const derived: DerivedOptions<Option, Group> = {
+    selectValue,
+    categorized: buildCategorizedOptions(props, selectValue),
+  };
+  derivedOptionsCache.set(props, derived);
+  return derived;
+}
+
+function getCachedCategorizedOptions<
   Option,
   IsMulti extends boolean,
   Group extends GroupBase<Option>
 >(props: Props<Option, IsMulti, Group>, selectValue: Options<Option>) {
-  return buildFocusableOptionsFromCategorizedOptions(
-    buildCategorizedOptions(props, selectValue)
-  );
+  return getDerivedOptions(props, selectValue).categorized;
+}
+
+function getCachedFocusableOptions<
+  Option,
+  IsMulti extends boolean,
+  Group extends GroupBase<Option>
+>(props: Props<Option, IsMulti, Group>, selectValue: Options<Option>) {
+  const derived = getDerivedOptions(props, selectValue);
+  if (!derived.focusable) {
+    derived.focusable = buildFocusableOptionsFromCategorizedOptions(
+      derived.categorized
+    );
+  }
+  return derived.focusable;
+}
+
+function getCachedFocusableOptionsWithIds<
+  Option,
+  IsMulti extends boolean,
+  Group extends GroupBase<Option>
+>(
+  props: Props<Option, IsMulti, Group>,
+  selectValue: Options<Option>,
+  optionId: string
+) {
+  const derived = getDerivedOptions(props, selectValue);
+  if (!derived.withIds || derived.withIds.optionId !== optionId) {
+    derived.withIds = {
+      optionId,
+      value: buildFocusableOptionsWithIds(derived.categorized, optionId),
+    };
+  }
+  return derived.withIds.value;
 }
 
 function isFocusable<
@@ -622,6 +693,16 @@ const shouldHideSelectedOptions = <
 
 let instanceId = 1;
 
+interface CachedOptionElement<Option> {
+  element: ReactElement;
+  data: Option;
+  isDisabled: boolean;
+  isSelected: boolean;
+  isFocused: boolean;
+  label: string;
+  value: string;
+}
+
 export default class Select<
   Option = unknown,
   IsMulti extends boolean = false,
@@ -659,6 +740,20 @@ export default class Select<
   openAfterFocus = false;
   scrollToFocusedOptionOnUpdate = false;
   userIsDragging?: boolean;
+
+  // Rendered Option elements from the previous render, reused when nothing an
+  // option depends on has changed. Returning the identical element lets React
+  // skip re-rendering it, so moving focus across a long menu re-renders two
+  // options instead of all of them. Everything an option element is built
+  // from derives from the props object, selectValue, isAppleDevice and the
+  // Option component (the "epoch"), plus the option's own fields and focus.
+  optionElementCache: {
+    props: unknown;
+    selectValue: unknown;
+    isAppleDevice: boolean;
+    Option: unknown;
+    elements: Map<string, CachedOptionElement<Option>>;
+  } | null = null;
 
   // Refs
   // ------------------------------
@@ -727,12 +822,13 @@ export default class Select<
         inputValue !== prevProps.inputValue)
     ) {
       const focusableOptions = menuIsOpen
-        ? buildFocusableOptions(props, selectValue)
+        ? getCachedFocusableOptions(props, selectValue)
         : [];
 
       const focusableOptionsWithIds = menuIsOpen
-        ? buildFocusableOptionsWithIds(
-            buildCategorizedOptions(props, selectValue),
+        ? getCachedFocusableOptionsWithIds(
+            props,
+            selectValue,
             `${instancePrefix}-option`
           )
         : [];
@@ -1141,8 +1237,9 @@ export default class Select<
   };
 
   getFocusableOptionsWithIds = () => {
-    return buildFocusableOptionsWithIds(
-      buildCategorizedOptions(this.props, this.state.selectValue),
+    return getCachedFocusableOptionsWithIds(
+      this.props,
+      this.state.selectValue,
       this.getElementId('option')
     );
   };
@@ -1219,11 +1316,11 @@ export default class Select<
   };
 
   buildCategorizedOptions = () =>
-    buildCategorizedOptions(this.props, this.state.selectValue);
+    getCachedCategorizedOptions(this.props, this.state.selectValue);
   getCategorizedOptions = () =>
     this.props.menuIsOpen ? this.buildCategorizedOptions() : [];
   buildFocusableOptions = () =>
-    buildFocusableOptionsFromCategorizedOptions(this.buildCategorizedOptions());
+    getCachedFocusableOptions(this.props, this.state.selectValue);
   getFocusableOptions = () =>
     this.props.menuIsOpen ? this.buildFocusableOptions() : [];
 
@@ -1984,12 +2081,46 @@ export default class Select<
       onMenuScrollToBottom,
     } = this.props;
 
-    if (!menuIsOpen) return null;
+    if (!menuIsOpen) {
+      this.optionElementCache = null;
+      return null;
+    }
+
+    const { selectValue, isAppleDevice: appleDevice } = this.state;
+    const previousCache = this.optionElementCache;
+    const canReuse =
+      previousCache !== null &&
+      previousCache.props === this.props &&
+      previousCache.selectValue === selectValue &&
+      previousCache.isAppleDevice === appleDevice &&
+      previousCache.Option === Option;
+    const previousElements = canReuse ? previousCache!.elements : null;
+    const nextElements = new Map<string, CachedOptionElement<Option>>();
+    this.optionElementCache = {
+      props: this.props,
+      selectValue,
+      isAppleDevice: appleDevice,
+      Option,
+      elements: nextElements,
+    };
 
     // TODO: Internal Option Type here
     const render = (props: CategorizedOption<Option>, id: string) => {
       const { type, data, isDisabled, isSelected, label, value } = props;
       const isFocused = focusedOption === data;
+      const cached = previousElements && previousElements.get(id);
+      if (
+        cached &&
+        cached.data === data &&
+        cached.isFocused === isFocused &&
+        cached.isDisabled === isDisabled &&
+        cached.isSelected === isSelected &&
+        cached.label === label &&
+        cached.value === value
+      ) {
+        nextElements.set(id, cached);
+        return cached.element;
+      }
       const onHover = isDisabled ? undefined : () => this.onOptionHover(data);
       const onSelect = isDisabled ? undefined : () => this.selectOption(data);
       const optionId = `${this.getElementId('option')}-${id}`;
@@ -2003,7 +2134,7 @@ export default class Select<
         'aria-selected': this.state.isAppleDevice ? undefined : isSelected, // is not supported on Apple devices
       };
 
-      return (
+      const element = (
         <Option
           {...commonProps}
           innerProps={innerProps}
@@ -2020,6 +2151,16 @@ export default class Select<
           {this.formatOptionLabel(props.data, 'menu')}
         </Option>
       );
+      nextElements.set(id, {
+        element,
+        data,
+        isDisabled,
+        isSelected,
+        isFocused,
+        label,
+        value,
+      });
+      return element;
     };
 
     let menuUI: ReactNode;

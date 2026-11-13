@@ -1,5 +1,5 @@
 {
-  "name": "@react-select/monorepo",
+  "name": "react-select-fast-monorepo",
   "private": true,
   "version": "1.0.0",
   "description": "A Select control built with and for ReactJS",
@@ -77,14 +77,16 @@
     "e2e": "concurrently --kill-others --success=first --names 'SERVER,E2E' 'yarn start:test' 'yarn test:cypress'",
     "type-check": "tsc --build packages/react-select/tsconfig.json && tsc --build packages/react-select/src/__tests__/tsconfig.json && tsc --build docs/tsconfig.json && tsc --build cypress/tsconfig.json",
     "precommit": "yarn run type-check",
-    "postinstall": "preconstruct dev && manypkg check",
+    "postinstall": "preconstruct dev",
     "test:cypress": "yarn test:cypress:chrome && yarn test:cypress:firefox",
     "test:cypress:chrome": "cypress run --browser chrome",
     "test:cypress:firefox": "cypress run --browser firefox",
     "test:cypress:watch": "node ./node_modules/.bin/cypress open",
     "changeset": "changeset",
     "version-packages": "changeset version",
-    "release": "yarn build && changeset publish"
+    "release": "yarn build && changeset publish",
+    "bench:build": "sh bench/build.sh",
+    "bench:serve": "node bench/serve.mjs"
   },
   "files": [
     "dist",
@@ -102,7 +104,8 @@
   ],
   "jest": {
     "modulePathIgnorePatterns": [
-      "./node_modules"
+      "./node_modules",
+      "<rootDir>/bench/"
     ],
     "testRegex": "src/*(/(__tests?__/)([^_].*/)*?[^_][^/]*?\\.(test|spec)?\\.(ts|js)x?)$",
     "setupFilesAfterEnv": [
@@ -113,14 +116,11 @@
     ]
   },
   "workspaces": [
-    "packages/*",
-    "docs",
-    "storybook"
+    "packages/*"
   ],
   "preconstruct": {
     "packages": [
-      "packages/*",
-      "docs/generate-magical-types"
+      "packages/*"
     ],
     "exports": {
       "importConditionDefaultExport": "default"

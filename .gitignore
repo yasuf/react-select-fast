@@ -43,3 +43,7 @@ package-lock.json
 .NOTES.md
 
 magical-types
+
+# benchmark build output
+bench/bench.js
+bench/upstream/

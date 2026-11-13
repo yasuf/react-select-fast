@@ -253,6 +253,11 @@ for (let i = 0; i < diacritics.length; i++) {
   }
 }
 
+// Every diacritic in the table is outside the ASCII range (ASCII letters in the
+// table map to themselves), so pure-ASCII strings can skip the regex entirely.
+const nonAscii = /[^\u0000-\u007f]/;
+
 export const stripDiacritics = (str: string) => {
+  if (!nonAscii.test(str)) return str;
   return str.replace(anyDiacritic, (match) => diacriticToBase[match]);
 };

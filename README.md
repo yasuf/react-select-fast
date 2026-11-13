@@ -1,134 +1,53 @@
-[![NPM](https://img.shields.io/npm/v/react-select.svg)](https://www.npmjs.com/package/react-select)
-[![CircleCI](https://circleci.com/gh/JedWatson/react-select/tree/master.svg?style=shield)](https://circleci.com/gh/JedWatson/react-select/tree/master)
-[![Coverage Status](https://coveralls.io/repos/JedWatson/react-select/badge.svg?branch=master&service=github)](https://coveralls.io/github/JedWatson/react-select?branch=master)
-[![Supported by Thinkmill](https://thinkmill.github.io/badge/heart.svg)](http://thinkmill.com.au/?utm_source=github&utm_medium=badge&utm_campaign=react-select)
+# react-select-fast
 
-# React-Select
+A fork of [react-select](https://github.com/JedWatson/react-select) 5.10.2 with the same API and the same output, but far less render work on large menus.
 
-The Select control for [React](https://reactjs.org). Initially built for use in [KeystoneJS](https://www.keystonejs.com).
+It's a drop-in replacement. Props, `components` overrides, `styles`, `classNames`, class names (including emotion hashes), ARIA messages, ref instance fields and `onChange` action metadata are all unchanged. The full upstream test suite (255 tests, 5 snapshots) passes unmodified.
 
-See [react-select.com](https://www.react-select.com) for live demos and comprehensive docs.
-
-`react-select` is funded by [Thinkmill](https://www.thinkmill.com.au) and [Atlassian](https://atlaskit.atlassian.com).
-We are an open source project that is continuously supported by the community.
-
-React Select helps you develop powerful select components that _just work_ out of the box, without stopping you from customising the parts that are important to you.
-
-For the story behind this component, watch Jed's talk at React Conf 2019 - [building React Select](https://youtu.be/yS0jUnmBujE)
-
-Features include:
-
-- Flexible approach to data, with customisable functions
-- Extensible styling API with [emotion](https://emotion.sh)
-- Component Injection API for complete control over the UI behaviour
-- Controllable state props and modular architecture
-- Long-requested features like option groups, portal support, animation, and more
-
-## Using an older version?
-
-- [v3, v4, and v5 upgrade guide](https://react-select.com/upgrade)
-- [v2 upgrade guide](https://react-select.com/upgrade-to-v2)
-- React Select v1 documentation and examples are available at [v1.react-select.com](https://v1.react-select.com)
-
-# Installation and usage
-
-The easiest way to use react-select is to install it from npm and build it into your app with Webpack.
-
-```
-yarn add react-select
+```sh
+npm install react-select@npm:react-select-fast
 ```
 
-Then use it in your app:
+## Results
 
-```js
-import React, { useState } from 'react';
-import Select from 'react-select';
+Measured in a browser with React 16, production builds, one run of each version on the same page, median of 3–5 rounds. See [bench/](bench/).
 
-const options = [
-  { value: 'chocolate', label: 'Chocolate' },
-  { value: 'strawberry', label: 'Strawberry' },
-  { value: 'vanilla', label: 'Vanilla' },
-];
+| Options | Hover an option    | ArrowDown         | Type a character  | Mount         |
+| ------- | ------------------ | ----------------- | ----------------- | ------------- |
+| 100     | 0.9 → 0.2 ms       | 0.9 → 0.2 ms      | 1.0 → 0.7 ms      | 3.2 → 3.2 ms  |
+| 1,000   | 7.8 → 0.2 ms (39×) | 8.2 → 0.5 ms (16×) | 8.4 → 5.1 ms      | 23 → 20 ms    |
+| 5,000   | 42 → 0.8 ms (53×)  | 44 → 2.1 ms (21×) | 45 → 29 ms        | 102 → 86 ms   |
 
-export default function App() {
-  const [selectedOption, setSelectedOption] = useState(null);
+## What changed
 
-  return (
-    <div className="App">
-      <Select
-        defaultValue={selectedOption}
-        onChange={setSelectedOption}
-        options={options}
-      />
-    </div>
-  );
-}
+All changes are in `packages/react-select/src`:
+
+1. **Option element reuse** (`Select.tsx`, `renderMenu`). Upstream keeps `focusedOption` on the root component, so moving the highlight re-rendered every option. Option elements are now cached and returned as the same object when nothing they depend on has changed, so React skips them. A hover or arrow-key press re-renders 2 options instead of N. The cache is thrown away whenever the props object, `selectValue`, `isAppleDevice` or the `Option` component changes. Any parent re-render therefore still re-renders every option, just as upstream does.
+2. **Derived-option cache** (`Select.tsx`, `getDerivedOptions`). Upstream ran `filterOption`, `getOptionLabel` and the other option callbacks over every option 3 times per render, plus 2 more times in `getDerivedStateFromProps` on each keystroke and once more on each hover. The result is now cached by props identity and `selectValue`, so each input change does 1 pass and a hover does 0.
+3. **Filter normalization cache** (`filters.ts`). `createFilter` now caches each candidate string after trimming, lowercasing and stripping diacritics. It also resolves its config once, when the filter is created, instead of on every call.
+4. **ASCII fast path** (`diacritics.ts`). Every remapped diacritic is outside the ASCII range, so pure-ASCII strings skip the diacritic regex.
+
+## Compatibility notes
+
+These are the only behaviours that differ. All of them are about how often callbacks run, not what they return:
+
+- Your callbacks (`filterOption`, `getOptionLabel`, `getOptionValue`, `isOptionDisabled`, `isOptionSelected`, `formatOptionLabel`) and custom `Option` components are called less often. Code that relied on extra calls during internal re-renders (hover, keyboard focus) to pick up **mutable outside state without re-rendering `Select`** will see stale values until the next prop change. Passing changed state as a prop, or re-rendering the parent, works the same as upstream.
+- `createFilter(config)` reads `config` once when the filter is created. Mutating the config object afterwards has no effect.
+- The filter cache holds at most 100k normalized strings per filter.
+
+## Development
+
+```sh
+npx yarn@1.22.22 install --ignore-engines   # set CYPRESS_INSTALL_BINARY=0 to skip Cypress
+npx jest                                    # upstream suite + __tests__/fast.test.tsx
+yarn bench:build && yarn bench:serve        # open http://127.0.0.1:5199/, run `await runBench(5000)`
 ```
 
-## Props
+`__tests__/fast.test.tsx` checks that the new filter returns exactly what upstream's returns, using thousands of random inputs including diacritics. It also counts renders and callback calls to lock in the gains. The workspace is trimmed to `packages/*`; the docs site, Storybook and Cypress from upstream are not wired up.
 
-Common props you may want to specify include:
+## Next steps
 
-- `autoFocus` - focus the control when it mounts
-- `className` - apply a className to the control
-- `classNamePrefix` - apply classNames to inner elements with the given prefix
-- `isDisabled` - disable the control
-- `isMulti` - allow the user to select multiple values
-- `isSearchable` - allow the user to search for matching options
-- `name` - generate an HTML input with this name, containing the current value
-- `onChange` - subscribe to change events
-- `options` - specify the options the user can select from
-- `placeholder` - change the text displayed when no option is selected
-- `noOptionsMessage` - ({ inputValue: string }) => string | null - Text to display when there are no options
-- `value` - control the current value
+- **Typing is still O(matches)**: every visible option re-renders and emotion re-serializes its styles. Caching default style serialization, plus opt-in virtualization for 10k+ options, would address this.
+- Make sure every change works on React 17, 18 and 19. The upstream suite runs on React 16 only.
 
-See the [props documentation](https://www.react-select.com/props) for complete documentation on the props react-select supports.
-
-## Controllable Props
-
-You can control the following props by providing values for them. If you don't, react-select will manage them for you.
-
-- `value` / `onChange` - specify the current value of the control
-- `menuIsOpen` / `onMenuOpen` / `onMenuClose` - control whether the menu is open
-- `inputValue` / `onInputChange` - control the value of the search input (changing this will update the available options)
-
-If you don't provide these props, you can set the initial value of the state they control:
-
-- `defaultValue` - set the initial value of the control
-- `defaultMenuIsOpen` - set the initial open value of the menu
-- `defaultInputValue` - set the initial value of the search input
-
-## Methods
-
-React-select exposes two public methods:
-
-- `focus()` - focus the control programmatically
-- `blur()` - blur the control programmatically
-
-## Customisation
-
-Check the docs for more information on:
-
-- [Customising the styles](https://www.react-select.com/styles)
-- [Using custom components](https://www.react-select.com/components)
-- [Using the built-in animated components](https://www.react-select.com/home#animated-components)
-- [Creating an async select](https://www.react-select.com/async)
-- [Allowing users to create new options](https://www.react-select.com/creatable)
-- [Advanced use-cases](https://www.react-select.com/advanced)
-- [TypeScript guide](https://www.react-select.com/typescript)
-
-## TypeScript
-
-The v5 release represents a rewrite from JavaScript to TypeScript. The types for v4 and earlier releases are available at [@types](https://www.npmjs.com/package/@types/react-select). See the [TypeScript guide](https://www.react-select.com/typescript) for how to use the types starting with v5.
-
-# Thanks
-
-Thank you to everyone who has contributed to this project. It's been a wild ride.
-
-If you like React Select, you should [follow me on Twitter](https://twitter.com/jedwatson)!
-
-Shout out to [Joss Mackison](https://github.com/jossmac), [Charles Lee](https://github.com/gwyneplaine), [Ben Conolly](https://github.com/Noviny), [Tom Walker](https://github.com/bladey), [Nathan Bierema](https://github.com/Methuselah96), [Eric Bonow](https://github.com/ebonow), [Emma Hamilton](https://github.com/emmatown), [Dave Brotherstone](https://github.com/bruderstein), [Brian Vaughn](https://github.com/bvaughn), and the [Atlassian Design System](https://atlassian.design) team who along with many other contributors have made this possible ❤️
-
-## License
-
-MIT Licensed. Copyright (c) Jed Watson 2022.
+Original README: [UPSTREAM_README.md](UPSTREAM_README.md). MIT, same as upstream.
