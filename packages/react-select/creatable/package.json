@@ -1,5 +1,5 @@
 {
-  "main": "dist/react-select-creatable.cjs.js",
-  "module": "dist/react-select-creatable.esm.js",
-  "types": "dist/react-select-creatable.cjs.d.ts"
+  "main": "dist/react-select-fast-creatable.cjs.js",
+  "module": "dist/react-select-fast-creatable.esm.js",
+  "types": "dist/react-select-fast-creatable.cjs.d.ts"
 }

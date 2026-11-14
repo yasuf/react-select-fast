@@ -1,5 +1,5 @@
 {
-  "main": "dist/react-select-animated.cjs.js",
-  "module": "dist/react-select-animated.esm.js",
-  "types": "dist/react-select-animated.cjs.d.ts"
+  "main": "dist/react-select-fast-animated.cjs.js",
+  "module": "dist/react-select-fast-animated.esm.js",
+  "types": "dist/react-select-fast-animated.cjs.d.ts"
 }

@@ -1,5 +1,5 @@
 {
-  "main": "dist/react-select-async.cjs.js",
-  "module": "dist/react-select-async.esm.js",
-  "types": "dist/react-select-async.cjs.d.ts"
+  "main": "dist/react-select-fast-async.cjs.js",
+  "module": "dist/react-select-fast-async.esm.js",
+  "types": "dist/react-select-fast-async.cjs.d.ts"
 }
