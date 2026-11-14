@@ -1,6 +1,6 @@
 {
   "name": "react-select-fast",
-  "version": "5.10.2-fast.0",
+  "version": "0.1.0",
   "description": "Drop-in, API-identical react-select with far less render work on large menus",
   "main": "dist/react-select-fast.cjs.js",
   "module": "dist/react-select-fast.esm.js",
