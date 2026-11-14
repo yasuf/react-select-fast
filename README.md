@@ -44,14 +44,15 @@ yarn demo          # build demo/ and serve it at http://127.0.0.1:5200/
 yarn demo:deploy   # build and publish it to the gh-pages branch (GitHub Pages)
 ```
 
-The two libraries run side by side on React 19, with the same options and the same main thread. Hover the lists, use the arrow keys, or type. Each panel times every interaction from the input event until React has committed and laid out, and shows the median, p95 and a bar per interaction (both panels use the same 0–100 ms scale). **Run script** plays the same 110-step interaction (hover sweep, arrow keys, typing) one step per frame, and **Race both** runs it on each panel and compares wall-clock time. The main-thread graph at the top shows dropped frames. Switch the option count (1k–20k) and default vs custom `styles.option` at the top.
+The two libraries run side by side on React 19, with the same options and the same main thread. Hover the lists, use the arrow keys, or type. Each panel times every interaction from the input event until React has committed and laid out, and shows the median, p95 and a bar per interaction (both panels use the same 0–100 ms scale). **Run script** plays a fixed interaction script for the scenario (hover sweep, arrow keys, typing, and loads or picks where relevant) one step per frame, and **Race both** runs it on each panel and compares wall-clock time. The main-thread graph at the top shows dropped frames. Switch the option count (1k–20k) and default vs custom `styles.option` at the top.
 
-Four scenarios:
+Six scenarios:
 
 - **Static list:** the options are passed in directly.
+- **Custom option rendering:** a custom `Option` component (an avatar with initials, the label and a line of details) built on `components.Option`. Fast can't assume anything about custom markup, so it re-renders every option whenever a prop changes, as upstream does. Typing therefore gains only from the filter caches. Hover and arrow keys still re-render just 2 options instead of all of them. At 5,000 options: hover 95 → 29 ms (the rest is the browser restyling 3× more DOM), and the script 13.1 → 6.1 s.
+- **Categorized (groups):** the options are split into 30 groups with headings. Options inside groups share the same element cache as a flat list. At 5,000 options: hover 56 → 7.6 ms, arrow keys 56 → 9.2 ms, typing 26 → 8.1 ms, and the script 14.9 → 6.0 s.
 - **Fetched (async search):** an `AsyncSelect` whose `loadOptions` queries a fake server (250 ms latency). Responses are new objects, like parsed JSON. Each response has to render in full in both libraries, so the gain is in hover, arrow keys and typing on the results, not in the response itself.
 - **Infinite scroll:** pages load through `onMenuScrollToBottom` and are appended. Stock re-renders every loaded option for each new page, so its load time grows with the list. Fast renders only the new page (10,000 options in 20 pages: page load median 137 → 51 ms, p95 247 → 60 ms).
-
 - **Multiselect:** `isMulti` with the menu kept open. Every pick or removal changes the selected values and hides or restores an option, so the whole list is re-checked. At 10,000 options: select/remove 123 → 21 ms, and the full script 10.0 → 2.0 s.
 
 The **Load → render** timer measures from data arriving to it being on screen, and **Select / remove** from a click, Enter or Backspace to the updated list.
@@ -88,10 +89,10 @@ These are the only behaviours that differ. All of them are about how often callb
 
 | React | Fork        | Stock react-select | Fork-only failures |
 | ----- | ----------- | ------------------ | ------------------ |
-| 16    | 300 / 300   | 255 / 255          | 0                  |
-| 17    | 298 / 300   | 253 / 255          | 0                  |
-| 18    | 298 / 300   | 253 / 255          | 0                  |
-| 19    | 298 / 300   | 253 / 255          | 0                  |
+| 16    | 312 / 312   | 255 / 255          | 0                  |
+| 17    | 310 / 312   | 253 / 255          | 0                  |
+| 18    | 310 / 312   | 253 / 255          | 0                  |
+| 19    | 310 / 312   | 253 / 255          | 0                  |
 
 The 2 failures on React 17+ are upstream's own autofocus tests ("should call auto focus only once"). They fail the same way on stock react-select.
 

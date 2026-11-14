@@ -5,8 +5,8 @@
 // before React sees it) to the end of the React commit it causes, including
 // style recalculation and layout. The commit is detected by a MenuList wrapper
 // whose layout effect runs on every Select render. Both libraries get the same
-// wrapper; react-select-fast's fast paths depend only on the Option component,
-// which stays the default.
+// wrapper (and, in the custom-rendering scenario, the same custom Option built
+// on each library's own components.Option).
 import React, {
   ComponentType,
   memo,
@@ -82,13 +82,79 @@ const COUNTS = [1000, 5000, 10000, 20000];
 // Scenarios and the fake server
 // ==============================
 
-type Scenario = 'static' | 'fetched' | 'infinite' | 'multi';
+type Scenario =
+  | 'static'
+  | 'custom'
+  | 'grouped'
+  | 'fetched'
+  | 'infinite'
+  | 'multi';
 const SCENARIOS: { id: Scenario; label: string }[] = [
   { id: 'static', label: 'Static list' },
+  { id: 'custom', label: 'Custom option rendering' },
+  { id: 'grouped', label: 'Categorized (groups)' },
   { id: 'fetched', label: 'Fetched (async search)' },
   { id: 'infinite', label: 'Infinite scroll' },
   { id: 'multi', label: 'Multiselect' },
 ];
+/** Scenarios whose options are all in memory (no simulated network). */
+const isLocal = (scenario: Scenario) =>
+  scenario === 'static' || scenario === 'custom' || scenario === 'grouped';
+
+interface DemoGroup {
+  label: string;
+  options: DemoOption[];
+}
+
+/** One category per leading word: 30 groups, in first-word order. */
+const makeGroups = (options: DemoOption[]): DemoGroup[] => {
+  const groups = WORDS.map((w) => ({
+    label: w[0].toUpperCase() + w.slice(1),
+    options: [] as DemoOption[],
+  }));
+  options.forEach((o, i) => groups[i % WORDS.length].options.push(o));
+  return groups;
+};
+
+const AVATAR_COLORS = [
+  '#5b3df5',
+  '#1a9e5c',
+  '#d4382c',
+  '#c98a00',
+  '#1f7ae0',
+  '#b5179e',
+];
+
+/**
+ * A typical custom option: an avatar with initials, the label, and a second
+ * line of details. Built on each library's own components.Option, so
+ * react-select-fast renders it in 'props' mode (no assumptions about markup).
+ */
+const makeRichOption = (Base: ComponentType<any>) =>
+  function RichOption(props: any) {
+    const { data, isSelected } = props;
+    const words = (data.label as string).split(' ');
+    const n = Number(String(data.value).slice(1));
+    return (
+      <Base {...props}>
+        <span className="rich">
+          <span
+            className="rich-avatar"
+            style={{ background: AVATAR_COLORS[n % AVATAR_COLORS.length] }}
+          >
+            {words[0][0].toUpperCase()}
+            {words[1][0].toUpperCase()}
+          </span>
+          <span className="rich-text">
+            <span className="rich-title">{props.children}</span>
+            <span className="rich-sub">
+              #{n} · {words[1]} team{isSelected ? ' · selected' : ''}
+            </span>
+          </span>
+        </span>
+      </Base>
+    );
+  };
 
 /** Simulated network round trip, identical for both libraries. */
 const FETCH_LATENCY = 250;
@@ -298,14 +364,23 @@ let throttledFrames = 0;
 
 const nextFrame = () =>
   new Promise<void>((resolve) => {
-    // Background tabs pause requestAnimationFrame; fall back to a timer.
+    const t0 = performance.now();
+    let resolved = false;
+    // Background tabs pause requestAnimationFrame; fall back to a timer. A
+    // slow frame (a big DOM update) can also miss the timer, so only count
+    // throttling when the page is hidden or the frame is very late.
     const timer = setTimeout(() => {
-      throttledFrames++;
+      resolved = true;
+      if (document.hidden) throttledFrames++;
       resolve();
     }, 100);
     requestAnimationFrame(() => {
-      clearTimeout(timer);
-      resolve();
+      if (!resolved) {
+        clearTimeout(timer);
+        resolve();
+      } else if (performance.now() - t0 > 1000) {
+        throttledFrames++;
+      }
     });
   });
 
@@ -346,7 +421,7 @@ const scriptSteps = (scenario: Scenario) =>
       (scenario === 'infinite' ? INFINITE_PAGES - 1 : TYPED.length);
 
 const describeScript = (scenario: Scenario) =>
-  scenario === 'static'
+  isLocal(scenario)
     ? `hover ${HOVERS} options, press ↓ ${KEYS} times, then type “alpha” and delete it`
     : scenario === 'fetched'
     ? `type “alpha” and delete it, waiting for each server response, then hover ${HOVERS} options and press ↓ ${KEYS} times`
@@ -355,6 +430,13 @@ const describeScript = (scenario: Scenario) =>
         INFINITE_PAGES - 1
       } times, waiting for each page, then hover ${HOVERS} options and press ↓ ${KEYS} times`
     : `pick ${PICKS} options by clicking, hover ${MULTI_HOVERS} options, press ↓ ${MULTI_KEYS} times, then press Backspace ${REMOVES} times to remove values`;
+
+const scenarioNote = (scenario: Scenario) =>
+  scenario === 'custom'
+    ? 'Each option is a custom Option component (avatar, label, details). With a custom Option, react-select-fast still skips unchanged options on hover and arrow keys, but re-renders them all when props change, such as on typing, because the component may read any prop. '
+    : scenario === 'grouped'
+    ? 'The options are split into 30 categories with headings. '
+    : '';
 
 /**
  * Wheel at the bottom of the menu, which is how react-select detects
@@ -410,7 +492,7 @@ async function runScript(
     }
   };
 
-  if (scenario === 'static') {
+  if (isLocal(scenario)) {
     await hoverAndKeys();
     for (const value of TYPED) {
       setInputValue(input, value);
@@ -478,6 +560,7 @@ const LIBS: Record<
     Select: ComponentType<any>;
     Async: ComponentType<any>;
     MenuList: ComponentType<any>;
+    RichOption: ComponentType<any>;
   }
 > = {
   stock: {
@@ -485,12 +568,14 @@ const LIBS: Record<
     Select: StockSelect,
     Async: StockAsync,
     MenuList: stockComponents.MenuList,
+    RichOption: makeRichOption(stockComponents.Option),
   },
   fast: {
     title: 'react-select-fast',
     Select: FastSelect,
     Async: FastAsync,
     MenuList: fastComponents.MenuList,
+    RichOption: makeRichOption(fastComponents.Option),
   },
 };
 
@@ -601,13 +686,16 @@ const SelectHost = memo(function SelectHost({
   styled: boolean;
   meter: Meter;
 }) {
-  const { Select, Async, MenuList } = LIBS[lib];
+  const { Select, Async, MenuList, RichOption } = LIBS[lib];
   const common = useMemo(
     () => ({
       menuIsOpen: true,
       classNamePrefix: 'rs',
       maxMenuHeight: 300,
-      components: { MenuList: makeTimedMenuList(MenuList, meter) },
+      components: {
+        MenuList: makeTimedMenuList(MenuList, meter),
+        ...(scenario === 'custom' ? { Option: RichOption } : {}),
+      },
       styles:
         scenario === 'multi'
           ? { ...(styled ? CUSTOM_STYLES : {}), ...MULTI_STYLES }
@@ -616,7 +704,11 @@ const SelectHost = memo(function SelectHost({
           : undefined,
       'aria-label': `${LIBS[lib].title} demo select`,
     }),
-    [lib, MenuList, meter, styled, scenario]
+    [lib, MenuList, RichOption, meter, styled, scenario]
+  );
+  const groups = useMemo(
+    () => (scenario === 'grouped' ? makeGroups(dataset) : null),
+    [scenario, dataset]
   );
   if (scenario === 'fetched') {
     return (
@@ -647,6 +739,11 @@ const SelectHost = memo(function SelectHost({
         options={dataset}
         placeholder="Pick several…"
       />
+    );
+  }
+  if (groups) {
+    return (
+      <Select {...common} options={groups} placeholder="Type to filter…" />
     );
   }
   return <Select {...common} options={dataset} placeholder="Type to filter…" />;
@@ -959,7 +1056,7 @@ function App() {
             </select>
           </label>
           <label>
-            {scenario === 'static' ? 'Options' : 'Dataset size'}
+            {isLocal(scenario) ? 'Options' : 'Dataset size'}
             <select
               value={count}
               onChange={(e) => setCount(Number(e.target.value))}
@@ -1039,7 +1136,8 @@ function App() {
       <footer className="foot">
         The script for this scenario: {describeScript(scenario)}, one step per
         animation frame.{' '}
-        {scenario === 'static'
+        {scenarioNote(scenario)}
+        {isLocal(scenario)
           ? `At 60 fps that takes about ${(
               (scriptSteps(scenario) * 16.7) /
               1000
