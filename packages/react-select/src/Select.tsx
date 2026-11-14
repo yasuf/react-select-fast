@@ -494,6 +494,11 @@ function buildFocusableOptionsWithIds<Option, Group extends GroupBase<Option>>(
 //
 // Entries are keyed by the `options` array, which is normally stable across
 // renders. An inline options array simply misses, as it would change anyway.
+//
+// Because the array is the key, an app that mutates it in place (e.g.
+// `options.push(...nextPage)` for infinite scroll) would otherwise get a stale
+// list. Each entry also keeps a snapshot of the array's contents (see
+// snapshotOptions) and is only used while they are unchanged.
 
 interface DerivedOptions<Option, Group extends GroupBase<Option>> {
   selectValue: Options<Option>;
@@ -504,7 +509,59 @@ interface DerivedOptions<Option, Group extends GroupBase<Option>> {
 
 interface DerivedOptionsEntry {
   props: object;
+  snapshot: OptionsSnapshot;
   derived: DerivedOptions<any, any>;
+}
+
+/**
+ * The identity of every top-level item, and for groups the identity and
+ * length of their `options` array. Detects in-place push/splice/sort/
+ * replacement of the options array or a group's options.
+ */
+interface OptionsSnapshot {
+  items: unknown[];
+  groupOptions: (readonly unknown[] | undefined)[];
+  groupLengths: number[];
+}
+
+function snapshotOptions(options: readonly unknown[]): OptionsSnapshot {
+  const items = options.slice();
+  const groupOptions: (readonly unknown[] | undefined)[] = [];
+  const groupLengths: number[] = [];
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    const inner =
+      item && typeof item === 'object' && 'options' in item
+        ? ((item as { options: readonly unknown[] }).options as
+            | readonly unknown[]
+            | undefined)
+        : undefined;
+    groupOptions.push(inner);
+    groupLengths.push(inner ? inner.length : -1);
+  }
+  return { items, groupOptions, groupLengths };
+}
+
+function optionsMatchSnapshot(
+  options: readonly unknown[],
+  snapshot: OptionsSnapshot
+): boolean {
+  const { items, groupOptions, groupLengths } = snapshot;
+  if (options.length !== items.length) return false;
+  for (let i = 0; i < items.length; i++) {
+    const item = options[i];
+    if (item !== items[i]) return false;
+    const inner = groupOptions[i];
+    if (inner !== undefined) {
+      if (
+        (item as { options?: unknown }).options !== inner ||
+        inner.length !== groupLengths[i]
+      ) {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 const derivedOptionsCache = new WeakMap<object, DerivedOptionsEntry>();
@@ -537,7 +594,8 @@ function getDerivedOptions<
   if (
     entry &&
     entry.derived.selectValue === selectValue &&
-    shallowEqualObjects(entry.props, props)
+    shallowEqualObjects(entry.props, props) &&
+    optionsMatchSnapshot(props.options, entry.snapshot)
   ) {
     entry.props = props;
     return entry.derived;
@@ -546,7 +604,11 @@ function getDerivedOptions<
     selectValue,
     categorized: buildCategorizedOptions(props, selectValue),
   };
-  derivedOptionsCache.set(props.options, { props, derived });
+  derivedOptionsCache.set(props.options, {
+    props,
+    snapshot: snapshotOptions(props.options),
+    derived,
+  });
   return derived;
 }
 
