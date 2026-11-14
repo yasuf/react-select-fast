@@ -46,6 +46,14 @@ yarn demo:deploy   # build and publish it to the gh-pages branch (GitHub Pages)
 
 The two libraries run side by side on React 19, with the same options and the same main thread. Hover the lists, use the arrow keys, or type. Each panel times every interaction from the input event until React has committed and laid out, and shows the median, p95 and a bar per interaction (both panels use the same 0–100 ms scale). **Run script** plays the same 110-step interaction (hover sweep, arrow keys, typing) one step per frame, and **Race both** runs it on each panel and compares wall-clock time. The main-thread graph at the top shows dropped frames. Switch the option count (1k–20k) and default vs custom `styles.option` at the top.
 
+Three scenarios:
+
+- **Static list:** the options are passed in directly.
+- **Fetched (async search):** an `AsyncSelect` whose `loadOptions` queries a fake server (250 ms latency). Responses are new objects, like parsed JSON. Each response has to render in full in both libraries, so the gain is in hover, arrow keys and typing on the results, not in the response itself.
+- **Infinite scroll:** pages load through `onMenuScrollToBottom` and are appended. Stock re-renders every loaded option for each new page, so its load time grows with the list. Fast renders only the new page (10,000 options in 20 pages: page load median 137 → 51 ms, p95 247 → 60 ms).
+
+The **Load → render** timer measures from data arriving to it being on screen.
+
 Keep the tab in the foreground: browsers pause animation frames and throttle background tabs, which distorts the numbers.
 
 ## What changed
@@ -68,6 +76,7 @@ These are the only behaviours that differ. All of them are about how often callb
 
 - Your callbacks (`filterOption`, `getOptionLabel`, `getOptionValue`, `isOptionDisabled`, `isOptionSelected`, `formatOptionLabel`) and custom `Option` components are called less often. Code that read **mutable outside state without passing it as a prop** used to pick it up on incidental re-renders (hover, keyboard focus, a parent re-rendering with unchanged props). Now it sees stale values until some prop actually changes. Passing changed state as a prop, or giving a callback a new identity when its inputs change (e.g. `useCallback` deps), works the same as upstream.
 - A `theme` function is called again only when the `theme` prop identity changes (or something else invalidates the cache). A theme function with the same identity that returns different values based on mutable outside state won't be picked up by already-rendered options.
+- Mutating option *objects* in place (same object, new `label`) isn't picked up until a prop changes. Mutating the options *array* in place (`push`, `splice`, sort) is detected, so infinite-scroll code that appends to the same array works.
 - `createFilter(config)` reads `config` once when the filter is created. Mutating the config object afterwards has no effect.
 - The filter cache holds at most 100k normalized strings per filter.
 
@@ -77,10 +86,10 @@ These are the only behaviours that differ. All of them are about how often callb
 
 | React | Fork        | Stock react-select | Fork-only failures |
 | ----- | ----------- | ------------------ | ------------------ |
-| 16    | 281 / 281   | 255 / 255          | 0                  |
-| 17    | 279 / 281   | 253 / 255          | 0                  |
-| 18    | 279 / 281   | 253 / 255          | 0                  |
-| 19    | 279 / 281   | 253 / 255          | 0                  |
+| 16    | 291 / 291   | 255 / 255          | 0                  |
+| 17    | 289 / 291   | 253 / 255          | 0                  |
+| 18    | 289 / 291   | 253 / 255          | 0                  |
+| 19    | 289 / 291   | 253 / 255          | 0                  |
 
 The 2 failures on React 17+ are upstream's own autofocus tests ("should call auto focus only once"). They fail the same way on stock react-select.
 

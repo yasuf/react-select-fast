@@ -25,6 +25,8 @@ import StockSelect, {
 import FastSelect, {
   components as fastComponents,
 } from '../packages/react-select/src/index';
+import StockAsync from '../bench/upstream/packages/react-select/src/Async';
+import FastAsync from '../packages/react-select/src/Async';
 
 // ==============================
 // Data
@@ -76,6 +78,36 @@ const makeOptions = (n: number): DemoOption[] =>
 
 const COUNTS = [1000, 5000, 10000, 20000];
 
+// ==============================
+// Scenarios and the fake server
+// ==============================
+
+type Scenario = 'static' | 'fetched' | 'infinite';
+const SCENARIOS: { id: Scenario; label: string }[] = [
+  { id: 'static', label: 'Static list' },
+  { id: 'fetched', label: 'Fetched (async search)' },
+  { id: 'infinite', label: 'Infinite scroll' },
+];
+
+/** Simulated network round trip, identical for both libraries. */
+const FETCH_LATENCY = 250;
+/** Infinite scroll loads the dataset in this many pages. */
+const INFINITE_PAGES = 20;
+
+const sleep = (ms: number) =>
+  new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+// Responses are fresh objects, as if parsed from JSON, so cached elements
+// can't be reused across responses: the realistic case for fetched data.
+const fromServer = (rows: DemoOption[]) => rows.map((o) => ({ ...o }));
+
+const serverSearch = (dataset: DemoOption[], input: string) => {
+  const q = input.trim().toLowerCase();
+  return fromServer(
+    q ? dataset.filter((o) => o.label.toLowerCase().includes(q)) : dataset
+  );
+};
+
 // A custom styles.option puts react-select-fast in "styled" mode.
 const CUSTOM_STYLES = {
   option: (base: object, state: { isFocused: boolean }) => ({
@@ -88,11 +120,12 @@ const CUSTOM_STYLES = {
 // Measurement
 // ==============================
 
-type Kind = 'hover' | 'key' | 'type';
+type Kind = 'hover' | 'key' | 'type' | 'load';
 const KINDS: { kind: Kind; label: string }[] = [
   { kind: 'hover', label: 'Hover' },
   { kind: 'key', label: 'Arrow keys' },
   { kind: 'type', label: 'Typing' },
+  { kind: 'load', label: 'Load → render' },
 ];
 
 interface Sample {
@@ -248,37 +281,97 @@ const setInputValue = (input: HTMLInputElement, value: string) => {
 };
 
 const TYPED = ['a', 'al', 'alp', 'alph', 'alpha', 'alph', 'alp', 'al', 'a', ''];
-const SCRIPT_STEPS = 60 + 40 + TYPED.length;
+const HOVERS = 60;
+const KEYS = 40;
+
+const scriptSteps = (scenario: Scenario) =>
+  HOVERS + KEYS + (scenario === 'infinite' ? INFINITE_PAGES - 1 : TYPED.length);
+
+const describeScript = (scenario: Scenario) =>
+  scenario === 'static'
+    ? `hover ${HOVERS} options, press ↓ ${KEYS} times, then type “alpha” and delete it`
+    : scenario === 'fetched'
+    ? `type “alpha” and delete it, waiting for each server response, then hover ${HOVERS} options and press ↓ ${KEYS} times`
+    : `scroll to the bottom ${
+        INFINITE_PAGES - 1
+      } times, waiting for each page, then hover ${HOVERS} options and press ↓ ${KEYS} times`;
 
 /**
- * Plays the same interaction on a panel, one step per animation frame so it
- * is visible: a 60-option hover sweep, 40 ArrowDowns, then typing "alpha" and
- * deleting it. Returns the wall-clock time; a slow library stretches each
- * step past one frame.
+ * Wheel at the bottom of the menu, which is how react-select detects
+ * "scrolled to bottom". The tiny upward wheel first clears its "already at
+ * bottom" flag, as the list growing after a page load would.
  */
-async function runScript(root: HTMLElement, onStep: (done: number) => void) {
+const scrollMenuToBottom = (root: HTMLElement) => {
+  const list = root.querySelector('[role="listbox"]') as HTMLElement | null;
+  if (!list) return;
+  list.scrollTop = list.scrollHeight;
+  const wheel = (deltaY: number) =>
+    list.dispatchEvent(
+      new WheelEvent('wheel', { deltaY, bubbles: true, cancelable: true })
+    );
+  wheel(-1);
+  wheel(100);
+};
+
+/**
+ * Plays the scenario's script on a panel, one step per animation frame so it
+ * is visible. Network waits are identical for both libraries; any extra time
+ * is rendering. Returns the wall-clock time.
+ */
+async function runScript(
+  scenario: Scenario,
+  root: HTMLElement,
+  onStep: (done: number) => void
+) {
   const input = root.querySelector('input')!;
   setInputValue(input, '');
-  await nextFrame();
+  if (scenario === 'fetched') await sleep(FETCH_LATENCY + 50);
+  await settle();
   const t0 = performance.now();
   let step = 0;
-  for (let i = 0; i < 60; i++) {
-    const option = root.querySelectorAll('[role="option"]')[i];
-    option?.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
-    onStep(++step);
-    await settle();
-  }
-  for (let i = 0; i < 40; i++) {
-    input.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })
-    );
-    onStep(++step);
-    await settle();
-  }
-  for (const value of TYPED) {
-    setInputValue(input, value);
-    onStep(++step);
-    await settle();
+  const tick = () => onStep(++step);
+
+  const hoverAndKeys = async () => {
+    const list = root.querySelector('[role="listbox"]') as HTMLElement | null;
+    if (list) list.scrollTop = 0;
+    for (let i = 0; i < HOVERS; i++) {
+      const option = root.querySelectorAll('[role="option"]')[i];
+      option?.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+      tick();
+      await settle();
+    }
+    for (let i = 0; i < KEYS; i++) {
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })
+      );
+      tick();
+      await settle();
+    }
+  };
+
+  if (scenario === 'static') {
+    await hoverAndKeys();
+    for (const value of TYPED) {
+      setInputValue(input, value);
+      tick();
+      await settle();
+    }
+  } else if (scenario === 'fetched') {
+    for (const value of TYPED) {
+      setInputValue(input, value);
+      tick();
+      await sleep(FETCH_LATENCY + 30);
+      await settle();
+    }
+    await hoverAndKeys();
+  } else {
+    for (let i = 0; i < INFINITE_PAGES - 1; i++) {
+      scrollMenuToBottom(root);
+      tick();
+      await sleep(FETCH_LATENCY + 30);
+      await settle();
+    }
+    await hoverAndKeys();
   }
   return performance.now() - t0;
 }
@@ -294,6 +387,7 @@ const LIBS: Record<
     title: string;
     subtitle: string;
     Select: ComponentType<any>;
+    Async: ComponentType<any>;
     MenuList: ComponentType<any>;
   }
 > = {
@@ -301,12 +395,14 @@ const LIBS: Record<
     title: 'react-select',
     subtitle: 'stock 5.10.2',
     Select: StockSelect,
+    Async: StockAsync,
     MenuList: stockComponents.MenuList,
   },
   fast: {
     title: 'react-select-fast',
     subtitle: 'this fork',
     Select: FastSelect,
+    Async: FastAsync,
     MenuList: fastComponents.MenuList,
   },
 };
@@ -317,36 +413,140 @@ const makeTimedMenuList = (Base: ComponentType<any>, meter: Meter) =>
     return <Base {...props} />;
   };
 
+/** Async search: every keystroke queries the fake server. */
+function FetchedSelect({
+  Async,
+  common,
+  dataset,
+  meter,
+}: {
+  Async: ComponentType<any>;
+  common: object;
+  dataset: DemoOption[];
+  meter: Meter;
+}) {
+  // The initial (defaultOptions) load happens on mount for both panels at
+  // once; they share a React root, so it would be timed as one combined
+  // commit. Only loads caused by the user's input are timed.
+  const requests = useRef(0);
+  const loadOptions = useCallback(
+    (input: string) => {
+      const timed = requests.current++ > 0;
+      return new Promise<DemoOption[]>((resolve) =>
+        setTimeout(() => {
+          const results = serverSearch(dataset, input);
+          if (timed) meter.start('load'); // arrived; time until on screen
+          resolve(results);
+        }, FETCH_LATENCY)
+      );
+    },
+    [dataset, meter]
+  );
+  return (
+    <Async
+      {...common}
+      defaultOptions
+      loadOptions={loadOptions}
+      placeholder="Type to search the server…"
+    />
+  );
+}
+
+/** Loads the next page when the menu is scrolled to the bottom. */
+function InfiniteSelect({
+  Select,
+  common,
+  dataset,
+  meter,
+}: {
+  Select: ComponentType<any>;
+  common: object;
+  dataset: DemoOption[];
+  meter: Meter;
+}) {
+  const pageSize = Math.max(50, Math.ceil(dataset.length / INFINITE_PAGES));
+  const [options, setOptions] = useState(() =>
+    fromServer(dataset.slice(0, pageSize))
+  );
+  const [loading, setLoading] = useState(false);
+  const loaded = useRef(pageSize);
+  const inFlight = useRef(false);
+
+  const loadMore = useCallback(() => {
+    if (inFlight.current || loaded.current >= dataset.length) return;
+    inFlight.current = true;
+    setLoading(true);
+    setTimeout(() => {
+      const next = fromServer(
+        dataset.slice(loaded.current, loaded.current + pageSize)
+      );
+      loaded.current += next.length;
+      inFlight.current = false;
+      meter.start('load');
+      setOptions((prev) => [...prev, ...next]);
+      setLoading(false);
+    }, FETCH_LATENCY);
+  }, [dataset, meter, pageSize]);
+
+  return (
+    <Select
+      {...common}
+      options={options}
+      isLoading={loading}
+      onMenuScrollToBottom={loadMore}
+      placeholder={`Scroll the list to load more · ${options.length.toLocaleString()} of ${dataset.length.toLocaleString()} loaded`}
+    />
+  );
+}
+
 // Memoized with stable props so the Select only re-renders from its own
-// interactions, never from the stats around it.
+// interactions and data, never from the stats around it.
 const SelectHost = memo(function SelectHost({
   lib,
-  options,
+  scenario,
+  dataset,
   styled,
   meter,
 }: {
   lib: Lib;
-  options: DemoOption[];
+  scenario: Scenario;
+  dataset: DemoOption[];
   styled: boolean;
   meter: Meter;
 }) {
-  const { Select, MenuList } = LIBS[lib];
-  const components = useMemo(
-    () => ({ MenuList: makeTimedMenuList(MenuList, meter) }),
-    [MenuList, meter]
+  const { Select, Async, MenuList } = LIBS[lib];
+  const common = useMemo(
+    () => ({
+      menuIsOpen: true,
+      classNamePrefix: 'rs',
+      maxMenuHeight: 300,
+      components: { MenuList: makeTimedMenuList(MenuList, meter) },
+      styles: styled ? CUSTOM_STYLES : undefined,
+      'aria-label': `${LIBS[lib].title} demo select`,
+    }),
+    [lib, MenuList, meter, styled]
   );
-  return (
-    <Select
-      options={options}
-      menuIsOpen
-      classNamePrefix="rs"
-      maxMenuHeight={300}
-      components={components}
-      styles={styled ? CUSTOM_STYLES : undefined}
-      placeholder="Type to filter…"
-      aria-label={`${LIBS[lib].title} demo select`}
-    />
-  );
+  if (scenario === 'fetched') {
+    return (
+      <FetchedSelect
+        Async={Async}
+        common={common}
+        dataset={dataset}
+        meter={meter}
+      />
+    );
+  }
+  if (scenario === 'infinite') {
+    return (
+      <InfiniteSelect
+        Select={Select}
+        common={common}
+        dataset={dataset}
+        meter={meter}
+      />
+    );
+  }
+  return <Select {...common} options={dataset} placeholder="Type to filter…" />;
 });
 
 function Stats({ meter }: { meter: Meter }) {
@@ -424,6 +624,7 @@ function Stats({ meter }: { meter: Meter }) {
 
 function Panel({
   lib,
+  scenario,
   options,
   styled,
   meter,
@@ -433,6 +634,7 @@ function Panel({
   busy,
 }: {
   lib: Lib;
+  scenario: Scenario;
   options: DemoOption[];
   styled: boolean;
   meter: Meter;
@@ -469,9 +671,10 @@ function Panel({
       </header>
       <div className="select-area" ref={setAreaRef}>
         <SelectHost
-          key={`${options.length}-${styled}`}
+          key={`${scenario}-${options.length}-${styled}`}
           lib={lib}
-          options={options}
+          scenario={scenario}
+          dataset={options}
           styled={styled}
           meter={meter}
         />
@@ -480,7 +683,9 @@ function Panel({
         <div className="progress">
           <div
             className="progress-fill"
-            style={{ width: `${((script?.done ?? 0) / SCRIPT_STEPS) * 100}%` }}
+            style={{
+              width: `${((script?.done ?? 0) / scriptSteps(scenario)) * 100}%`,
+            }}
           />
         </div>
         <div className="script-time">
@@ -488,7 +693,7 @@ function Panel({
             ? `Script: ${(script.ms / 1000).toFixed(2)} s`
             : script
             ? 'Running…'
-            : `Script: ${SCRIPT_STEPS} steps`}
+            : `Script: ${scriptSteps(scenario)} steps`}
         </div>
       </div>
       <Stats meter={meter} />
@@ -579,6 +784,7 @@ function FrameMeter() {
 function App() {
   const [count, setCount] = useState(5000);
   const [styled, setStyled] = useState(false);
+  const [scenario, setScenario] = useState<Scenario>('static');
   const options = useMemo(() => makeOptions(count), [count]);
   const meters = useMemo(() => ({ stock: new Meter(), fast: new Meter() }), []);
   const roots = useRef<Record<Lib, HTMLElement | null>>({
@@ -594,7 +800,7 @@ function App() {
     meters.stock.reset();
     meters.fast.reset();
     setScripts({});
-  }, [count, styled, meters]);
+  }, [count, styled, scenario, meters]);
 
   const run = async (libs: Lib[]) => {
     setBusy(true);
@@ -608,10 +814,13 @@ function App() {
       if (!root) continue;
       setScripts((s) => ({ ...s, [lib]: { done: 0, ms: null } }));
       await nextFrame();
-      const ms = await runScript(root, (done) =>
+      const ms = await runScript(scenario, root, (done) =>
         setScripts((s) => ({ ...s, [lib]: { done, ms: null } }))
       );
-      setScripts((s) => ({ ...s, [lib]: { done: SCRIPT_STEPS, ms } }));
+      setScripts((s) => ({
+        ...s,
+        [lib]: { done: scriptSteps(scenario), ms },
+      }));
     }
     setBusy(false);
   };
@@ -625,15 +834,30 @@ function App() {
         <div className="title">
           <h1>react-select vs react-select-fast</h1>
           <p>
-            The same Select, same options, side by side on React 19. Hover the
-            lists, press ↑/↓ after clicking a list, or type to filter. Each
-            panel times every interaction from the input event until React has
-            committed and laid out.
+            The same Select, same data, side by side on React 19. Hover the
+            lists, press ↑/↓ after clicking a list, type to filter, or scroll to
+            load more. Each panel times every interaction from the input event,
+            and every data load from its arrival, until React has committed and
+            laid out.
           </p>
         </div>
         <div className="controls">
           <label>
-            Options
+            Scenario
+            <select
+              value={scenario}
+              onChange={(e) => setScenario(e.target.value as Scenario)}
+              disabled={busy}
+            >
+              {SCENARIOS.map(({ id, label }) => (
+                <option key={id} value={id}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            {scenario === 'static' ? 'Options' : 'Dataset size'}
             <select
               value={count}
               onChange={(e) => setCount(Number(e.target.value))}
@@ -670,7 +894,8 @@ function App() {
       {stockMs != null && fastMs != null && (
         <div className="race" role="status">
           <span>
-            Same script, {count.toLocaleString()} options: stock{' '}
+            Same script ({SCENARIOS.find((x) => x.id === scenario)!.label},{' '}
+            {count.toLocaleString()} options): stock{' '}
             <b>{(stockMs / 1000).toFixed(2)} s</b>, fast{' '}
             <b>{(fastMs / 1000).toFixed(2)} s</b>
           </span>
@@ -687,6 +912,7 @@ function App() {
           <Panel
             key={lib}
             lib={lib}
+            scenario={scenario}
             options={options}
             styled={styled}
             meter={meters[lib]}
@@ -701,11 +927,17 @@ function App() {
       </div>
 
       <footer className="foot">
-        A script runs one step per animation frame: hover 60 options, press ↓ 40
-        times, then type “alpha” and delete it. At 60 fps that takes about{' '}
-        {((SCRIPT_STEPS * 16.7) / 1000).toFixed(1)} s; anything longer is time
-        spent rendering. Both selects share one main thread, so the frame graph
-        spikes whichever panel is busy.
+        The script for this scenario: {describeScript(scenario)}, one step per
+        animation frame.{' '}
+        {scenario === 'static'
+          ? `At 60 fps that takes about ${(
+              (scriptSteps(scenario) * 16.7) /
+              1000
+            ).toFixed(1)} s; anything longer is time spent rendering.`
+          : `Each request waits ${FETCH_LATENCY} ms of simulated network for both libraries, so the difference in total time is rendering.`}{' '}
+        Fetched and loaded options arrive as new objects, like JSON from a real
+        API. Both selects share one main thread, so the frame graph spikes
+        whichever panel is busy.
       </footer>
     </main>
   );
