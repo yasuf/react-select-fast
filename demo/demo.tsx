@@ -82,11 +82,12 @@ const COUNTS = [1000, 5000, 10000, 20000];
 // Scenarios and the fake server
 // ==============================
 
-type Scenario = 'static' | 'fetched' | 'infinite';
+type Scenario = 'static' | 'fetched' | 'infinite' | 'multi';
 const SCENARIOS: { id: Scenario; label: string }[] = [
   { id: 'static', label: 'Static list' },
   { id: 'fetched', label: 'Fetched (async search)' },
   { id: 'infinite', label: 'Infinite scroll' },
+  { id: 'multi', label: 'Multiselect' },
 ];
 
 /** Simulated network round trip, identical for both libraries. */
@@ -116,16 +117,37 @@ const CUSTOM_STYLES = {
   }),
 };
 
+// Multiselect: keep the chips area from pushing the menu out of the panel.
+// (Only option styles affect react-select-fast's fast paths.)
+const MULTI_STYLES = {
+  valueContainer: (base: object) => ({
+    ...base,
+    maxHeight: 76,
+    overflowY: 'auto',
+  }),
+};
+
 // ==============================
 // Measurement
 // ==============================
 
-type Kind = 'hover' | 'key' | 'type' | 'load';
-const KINDS: { kind: Kind; label: string }[] = [
-  { kind: 'hover', label: 'Hover' },
-  { kind: 'key', label: 'Arrow keys' },
-  { kind: 'type', label: 'Typing' },
-  { kind: 'load', label: 'Load → render' },
+type Kind = 'hover' | 'key' | 'type' | 'load' | 'select';
+const KIND_LABELS: Record<Kind, string> = {
+  hover: 'Hover',
+  key: 'Arrow keys',
+  type: 'Typing',
+  load: 'Load → render',
+  select: 'Select / remove',
+};
+/** The timers each scenario shows. */
+const kindsFor = (scenario: Scenario): Kind[] => [
+  'hover',
+  'key',
+  'type',
+  ...(scenario === 'fetched' || scenario === 'infinite'
+    ? (['load'] as Kind[])
+    : []),
+  ...(scenario === 'multi' ? (['select'] as Kind[]) : []),
 ];
 
 interface Sample {
@@ -212,15 +234,31 @@ function useInteractionCapture(root: HTMLElement | null, meter: Meter) {
     };
     const onKey = (e: KeyboardEvent) => {
       if (NAV_KEYS.has(e.key)) meter.start('key');
+      // Enter picks the focused option; Backspace removes the last value.
+      else if (e.key === 'Enter' || e.key === 'Backspace') {
+        meter.start('select');
+      }
     };
     const onInput = () => meter.start('type');
+    // Picking an option, or removing a chip with its ×.
+    const onClick = (e: Event) => {
+      const target = e.target as Element;
+      if (
+        target.closest('[role="option"]') ||
+        target.closest('[class*="multi-value__remove"]')
+      ) {
+        meter.start('select');
+      }
+    };
     root.addEventListener('mouseover', onOver, true);
     root.addEventListener('keydown', onKey, true);
     root.addEventListener('input', onInput, true);
+    root.addEventListener('click', onClick, true);
     return () => {
       root.removeEventListener('mouseover', onOver, true);
       root.removeEventListener('keydown', onKey, true);
       root.removeEventListener('input', onInput, true);
+      root.removeEventListener('click', onClick, true);
     };
   }, [root, meter]);
 }
@@ -251,10 +289,20 @@ const macrotask = () =>
     channel.port2.postMessage(null);
   });
 
+/**
+ * Counts frames that had to fall back to the timer. Background tabs (or a
+ * hidden window) pause requestAnimationFrame, which stretches script times
+ * for reasons that have nothing to do with rendering.
+ */
+let throttledFrames = 0;
+
 const nextFrame = () =>
   new Promise<void>((resolve) => {
     // Background tabs pause requestAnimationFrame; fall back to a timer.
-    const timer = setTimeout(resolve, 100);
+    const timer = setTimeout(() => {
+      throttledFrames++;
+      resolve();
+    }, 100);
     requestAnimationFrame(() => {
       clearTimeout(timer);
       resolve();
@@ -284,17 +332,29 @@ const TYPED = ['a', 'al', 'alp', 'alph', 'alpha', 'alph', 'alp', 'al', 'a', ''];
 const HOVERS = 60;
 const KEYS = 40;
 
+// Multiselect script sizes.
+const PICKS = 20;
+const MULTI_HOVERS = 30;
+const MULTI_KEYS = 20;
+const REMOVES = 10;
+
 const scriptSteps = (scenario: Scenario) =>
-  HOVERS + KEYS + (scenario === 'infinite' ? INFINITE_PAGES - 1 : TYPED.length);
+  scenario === 'multi'
+    ? PICKS + MULTI_HOVERS + MULTI_KEYS + REMOVES
+    : HOVERS +
+      KEYS +
+      (scenario === 'infinite' ? INFINITE_PAGES - 1 : TYPED.length);
 
 const describeScript = (scenario: Scenario) =>
   scenario === 'static'
     ? `hover ${HOVERS} options, press ↓ ${KEYS} times, then type “alpha” and delete it`
     : scenario === 'fetched'
     ? `type “alpha” and delete it, waiting for each server response, then hover ${HOVERS} options and press ↓ ${KEYS} times`
-    : `scroll to the bottom ${
+    : scenario === 'infinite'
+    ? `scroll to the bottom ${
         INFINITE_PAGES - 1
-      } times, waiting for each page, then hover ${HOVERS} options and press ↓ ${KEYS} times`;
+      } times, waiting for each page, then hover ${HOVERS} options and press ↓ ${KEYS} times`
+    : `pick ${PICKS} options by clicking, hover ${MULTI_HOVERS} options, press ↓ ${MULTI_KEYS} times, then press Backspace ${REMOVES} times to remove values`;
 
 /**
  * Wheel at the bottom of the menu, which is how react-select detects
@@ -324,6 +384,7 @@ async function runScript(
   onStep: (done: number) => void
 ) {
   const input = root.querySelector('input')!;
+  const throttledBefore = throttledFrames;
   setInputValue(input, '');
   if (scenario === 'fetched') await sleep(FETCH_LATENCY + 50);
   await settle();
@@ -331,16 +392,16 @@ async function runScript(
   let step = 0;
   const tick = () => onStep(++step);
 
-  const hoverAndKeys = async () => {
+  const hoverAndKeys = async (hovers = HOVERS, keys = KEYS) => {
     const list = root.querySelector('[role="listbox"]') as HTMLElement | null;
     if (list) list.scrollTop = 0;
-    for (let i = 0; i < HOVERS; i++) {
+    for (let i = 0; i < hovers; i++) {
       const option = root.querySelectorAll('[role="option"]')[i];
       option?.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
       tick();
       await settle();
     }
-    for (let i = 0; i < KEYS; i++) {
+    for (let i = 0; i < keys; i++) {
       input.dispatchEvent(
         new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })
       );
@@ -364,7 +425,7 @@ async function runScript(
       await settle();
     }
     await hoverAndKeys();
-  } else {
+  } else if (scenario === 'infinite') {
     for (let i = 0; i < INFINITE_PAGES - 1; i++) {
       scrollMenuToBottom(root);
       tick();
@@ -372,8 +433,31 @@ async function runScript(
       await settle();
     }
     await hoverAndKeys();
+  } else {
+    // Picked options leave the menu, so spread the picks over the list.
+    for (let i = 0; i < PICKS; i++) {
+      const options = root.querySelectorAll('[role="option"]');
+      const option = options[(i * 7) % Math.min(options.length, 40)];
+      option?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      tick();
+      await settle();
+    }
+    await hoverAndKeys(MULTI_HOVERS, MULTI_KEYS);
+    for (let i = 0; i < REMOVES; i++) {
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true })
+      );
+      tick();
+      await settle();
+    }
   }
-  return performance.now() - t0;
+  return {
+    ms: performance.now() - t0,
+    // A tab hidden during the run makes its total meaningless.
+    throttled:
+      throttledFrames > throttledBefore ||
+      document.visibilityState !== 'visible',
+  };
 }
 
 // ==============================
@@ -381,11 +465,16 @@ async function runScript(
 // ==============================
 
 type Lib = 'stock' | 'fast';
+
+interface ScriptState {
+  done: number;
+  ms: number | null;
+  throttled?: boolean;
+}
 const LIBS: Record<
   Lib,
   {
     title: string;
-    subtitle: string;
     Select: ComponentType<any>;
     Async: ComponentType<any>;
     MenuList: ComponentType<any>;
@@ -393,14 +482,12 @@ const LIBS: Record<
 > = {
   stock: {
     title: 'react-select',
-    subtitle: 'stock 5.10.2',
     Select: StockSelect,
     Async: StockAsync,
     MenuList: stockComponents.MenuList,
   },
   fast: {
     title: 'react-select-fast',
-    subtitle: 'this fork',
     Select: FastSelect,
     Async: FastAsync,
     MenuList: fastComponents.MenuList,
@@ -521,10 +608,15 @@ const SelectHost = memo(function SelectHost({
       classNamePrefix: 'rs',
       maxMenuHeight: 300,
       components: { MenuList: makeTimedMenuList(MenuList, meter) },
-      styles: styled ? CUSTOM_STYLES : undefined,
+      styles:
+        scenario === 'multi'
+          ? { ...(styled ? CUSTOM_STYLES : {}), ...MULTI_STYLES }
+          : styled
+          ? CUSTOM_STYLES
+          : undefined,
       'aria-label': `${LIBS[lib].title} demo select`,
     }),
-    [lib, MenuList, meter, styled]
+    [lib, MenuList, meter, styled, scenario]
   );
   if (scenario === 'fetched') {
     return (
@@ -546,10 +638,21 @@ const SelectHost = memo(function SelectHost({
       />
     );
   }
+  if (scenario === 'multi') {
+    return (
+      <Select
+        {...common}
+        isMulti
+        closeMenuOnSelect={false}
+        options={dataset}
+        placeholder="Pick several…"
+      />
+    );
+  }
   return <Select {...common} options={dataset} placeholder="Type to filter…" />;
 });
 
-function Stats({ meter }: { meter: Meter }) {
+function Stats({ meter, scenario }: { meter: Meter; scenario: Scenario }) {
   useSyncExternalStore(meter.subscribe, meter.getVersion);
   const { samples } = meter;
   const recent = samples.slice(-64);
@@ -560,7 +663,8 @@ function Stats({ meter }: { meter: Meter }) {
   return (
     <div className="stats">
       <div className="stat-grid">
-        {KINDS.map(({ kind, label }) => {
+        {kindsFor(scenario).map((kind) => {
+          const label = KIND_LABELS[kind];
           const xs = samples.filter((s) => s.kind === kind).slice(-50);
           const med = median(xs.map((s) => s.ms));
           return (
@@ -639,7 +743,7 @@ function Panel({
   styled: boolean;
   meter: Meter;
   rootRef: (el: HTMLDivElement | null) => void;
-  script: { done: number; ms: number | null } | undefined;
+  script: ScriptState | undefined;
   onRun: () => void;
   busy: boolean;
 }) {
@@ -652,14 +756,11 @@ function Panel({
     setRoot(el);
     latestRootRef.current(el);
   }, []);
-  const { title, subtitle } = LIBS[lib];
+  const { title } = LIBS[lib];
   return (
     <section className={`panel panel-${lib}`}>
       <header className="panel-head">
-        <div>
-          <h2>{title}</h2>
-          <div className="panel-sub">{subtitle}</div>
-        </div>
+        <h2>{title}</h2>
         <div className="panel-actions">
           <button onClick={onRun} disabled={busy}>
             Run script
@@ -690,13 +791,15 @@ function Panel({
         </div>
         <div className="script-time">
           {script?.ms != null
-            ? `Script: ${(script.ms / 1000).toFixed(2)} s`
+            ? `Script: ${(script.ms / 1000).toFixed(2)} s${
+                script.throttled ? ' (tab was hidden)' : ''
+              }`
             : script
             ? 'Running…'
             : `Script: ${scriptSteps(scenario)} steps`}
         </div>
       </div>
-      <Stats meter={meter} />
+      <Stats meter={meter} scenario={scenario} />
     </section>
   );
 }
@@ -791,9 +894,7 @@ function App() {
     stock: null,
     fast: null,
   });
-  const [scripts, setScripts] = useState<
-    Partial<Record<Lib, { done: number; ms: number | null }>>
-  >({});
+  const [scripts, setScripts] = useState<Partial<Record<Lib, ScriptState>>>({});
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -814,12 +915,12 @@ function App() {
       if (!root) continue;
       setScripts((s) => ({ ...s, [lib]: { done: 0, ms: null } }));
       await nextFrame();
-      const ms = await runScript(scenario, root, (done) =>
+      const { ms, throttled } = await runScript(scenario, root, (done) =>
         setScripts((s) => ({ ...s, [lib]: { done, ms: null } }))
       );
       setScripts((s) => ({
         ...s,
-        [lib]: { done: scriptSteps(scenario), ms },
+        [lib]: { done: scriptSteps(scenario), ms, throttled },
       }));
     }
     setBusy(false);
@@ -827,6 +928,7 @@ function App() {
 
   const stockMs = scripts.stock?.ms;
   const fastMs = scripts.fast?.ms;
+  const raceThrottled = !!(scripts.stock?.throttled || scripts.fast?.throttled);
 
   return (
     <main>
@@ -899,9 +1001,17 @@ function App() {
             <b>{(stockMs / 1000).toFixed(2)} s</b>, fast{' '}
             <b>{(fastMs / 1000).toFixed(2)} s</b>
           </span>
-          <span className="race-x">
-            {(stockMs / fastMs).toFixed(1)}× faster
-          </span>
+          {raceThrottled ? (
+            <span className="race-warn">
+              The tab was hidden during the run, which pauses animation frames,
+              so these totals aren’t comparable. Keep the tab visible and race
+              again.
+            </span>
+          ) : (
+            <span className="race-x">
+              {(stockMs / fastMs).toFixed(1)}× faster
+            </span>
+          )}
         </div>
       )}
 

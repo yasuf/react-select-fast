@@ -199,11 +199,6 @@ button.ghost {
   flex-wrap: wrap;
 }
 
-.panel-sub {
-  font-size: 12px;
-  color: var(--muted);
-}
-
 .panel-actions {
   display: flex;
   gap: 8px;
@@ -358,4 +353,10 @@ b.tone-bad {
   font-size: 12px;
   color: var(--muted);
   max-width: 80ch;
+}
+
+.race-warn {
+  font-size: 12px;
+  color: var(--warn);
+  max-width: 48ch;
 }

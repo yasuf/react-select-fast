@@ -46,15 +46,17 @@ yarn demo:deploy   # build and publish it to the gh-pages branch (GitHub Pages)
 
 The two libraries run side by side on React 19, with the same options and the same main thread. Hover the lists, use the arrow keys, or type. Each panel times every interaction from the input event until React has committed and laid out, and shows the median, p95 and a bar per interaction (both panels use the same 0–100 ms scale). **Run script** plays the same 110-step interaction (hover sweep, arrow keys, typing) one step per frame, and **Race both** runs it on each panel and compares wall-clock time. The main-thread graph at the top shows dropped frames. Switch the option count (1k–20k) and default vs custom `styles.option` at the top.
 
-Three scenarios:
+Four scenarios:
 
 - **Static list:** the options are passed in directly.
 - **Fetched (async search):** an `AsyncSelect` whose `loadOptions` queries a fake server (250 ms latency). Responses are new objects, like parsed JSON. Each response has to render in full in both libraries, so the gain is in hover, arrow keys and typing on the results, not in the response itself.
 - **Infinite scroll:** pages load through `onMenuScrollToBottom` and are appended. Stock re-renders every loaded option for each new page, so its load time grows with the list. Fast renders only the new page (10,000 options in 20 pages: page load median 137 → 51 ms, p95 247 → 60 ms).
 
-The **Load → render** timer measures from data arriving to it being on screen.
+- **Multiselect:** `isMulti` with the menu kept open. Every pick or removal changes the selected values and hides or restores an option, so the whole list is re-checked. At 10,000 options: select/remove 123 → 21 ms, and the full script 10.0 → 2.0 s.
 
-Keep the tab in the foreground: browsers pause animation frames and throttle background tabs, which distorts the numbers.
+The **Load → render** timer measures from data arriving to it being on screen, and **Select / remove** from a click, Enter or Backspace to the updated list.
+
+If the tab is hidden during a race, the demo says so instead of showing a speed-up. Keep the tab in the foreground: browsers pause animation frames and throttle background tabs, which distorts the numbers.
 
 ## What changed
 
@@ -86,10 +88,10 @@ These are the only behaviours that differ. All of them are about how often callb
 
 | React | Fork        | Stock react-select | Fork-only failures |
 | ----- | ----------- | ------------------ | ------------------ |
-| 16    | 291 / 291   | 255 / 255          | 0                  |
-| 17    | 289 / 291   | 253 / 255          | 0                  |
-| 18    | 289 / 291   | 253 / 255          | 0                  |
-| 19    | 289 / 291   | 253 / 255          | 0                  |
+| 16    | 300 / 300   | 255 / 255          | 0                  |
+| 17    | 298 / 300   | 253 / 255          | 0                  |
+| 18    | 298 / 300   | 253 / 255          | 0                  |
+| 19    | 298 / 300   | 253 / 255          | 0                  |
 
 The 2 failures on React 17+ are upstream's own autofocus tests ("should call auto focus only once"). They fail the same way on stock react-select.
 
