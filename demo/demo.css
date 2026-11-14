@@ -77,6 +77,23 @@ p {
   margin-bottom: 16px;
 }
 
+.links {
+  display: flex;
+  gap: 16px;
+  margin-top: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.links a {
+  color: var(--fast);
+  text-decoration: none;
+}
+
+.links a:hover {
+  text-decoration: underline;
+}
+
 .controls {
   display: flex;
   flex-wrap: wrap;

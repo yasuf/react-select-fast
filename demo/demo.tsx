@@ -1039,6 +1039,10 @@ function App() {
             and every data load from its arrival, until React has committed and
             laid out.
           </p>
+          <nav className="links" aria-label="Project links">
+            <a href="https://github.com/yasuf/react-select-fast">GitHub</a>
+            <a href="https://www.npmjs.com/package/react-select-fast">npm</a>
+          </nav>
         </div>
         <div className="controls">
           <label>
