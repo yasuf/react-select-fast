@@ -117,9 +117,4 @@ yarn bench:build && yarn bench:serve        # open http://127.0.0.1:5199/ (or ?r
 
 `__tests__/fast.test.tsx` checks that the new filter returns exactly what upstream's returns, using thousands of random inputs including diacritics. It also counts renders and callback calls to lock in the gains. The workspace is trimmed to `packages/*`; the docs site, Storybook and Cypress from upstream are not wired up.
 
-## Next steps
-
-- **Opt-in virtualization** for 10k+ options. Mount time and clearing the input still create one DOM node per option, which bounds both.
-- A custom `Option` component or `formatOptionLabel` still re-renders every visible option on each keystroke. That can't be avoided without knowing what the custom code reads.
-
 Original README: [UPSTREAM_README.md](UPSTREAM_README.md). MIT, same as upstream; [LICENSE](LICENSE) keeps the original copyright notice alongside the fork's.
