@@ -7,6 +7,16 @@ This project is inspired by, and built on, the original react-select by Jed Wats
 It's a drop-in replacement. Props, `components` overrides, `styles`, `classNames`, class names (including emotion hashes), ARIA messages, ref instance fields and `onChange` action metadata are all unchanged. The full upstream test suite (255 tests, 5 snapshots) passes unmodified on React 16. On React 17, 18 and 19 the fork passes every upstream test that stock react-select passes; see [React versions](#react-versions).
 
 ```sh
+npm install react-select-fast
+```
+
+```js
+import Select from 'react-select-fast';
+```
+
+Or keep your existing `react-select` imports untouched by installing it under the `react-select` name:
+
+```sh
 npm install react-select@npm:react-select-fast
 ```
 
