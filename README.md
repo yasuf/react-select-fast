@@ -1,10 +1,13 @@
 # react-select-fast
 
-A fork of [react-select](https://github.com/JedWatson/react-select) 5.10.2 with the same API and the same output, but far less render work on large menus.
+An exploration of how to make react-select faster.
 
-This project is inspired by, and built on, the original react-select by Jed Watson and its contributors. Its API, components and design are theirs; this fork only changes how much work it does. react-select-fast is an independent, unofficial fork and is not affiliated with or endorsed by the react-select maintainers. For anything not about performance, the [original project](https://github.com/JedWatson/react-select) is the place to go.
+A fork of [react-select](https://github.com/JedWatson/react-select) 5.10.2.
 
-It's a drop-in replacement. Props, `components` overrides, `styles`, `classNames`, class names (including emotion hashes), ARIA messages, ref instance fields and `onChange` action metadata are all unchanged. The full upstream test suite (255 tests, 5 snapshots) passes unmodified on React 16. On React 17, 18 and 19 the fork passes every upstream test that stock react-select passes; see [React versions](#react-versions).
+[Original project](https://github.com/JedWatson/react-select).
+
+
+## Getting Started
 
 ```sh
 npm install react-select-fast
@@ -56,33 +59,6 @@ yarn demo:deploy   # build and publish it to the gh-pages branch (GitHub Pages)
 
 The two libraries run side by side on React 19, with the same options and the same main thread. Hover the lists, use the arrow keys, or type. Each panel times every interaction from the input event until React has committed and laid out, and shows the median, p95 and a bar per interaction (both panels use the same 0–100 ms scale). **Run script** plays a fixed interaction script for the scenario (hover sweep, arrow keys, typing, and loads or picks where relevant) one step per frame, and **Race both** runs it on each panel and compares wall-clock time. The main-thread graph at the top shows dropped frames. Switch the option count (1k–20k) and default vs custom `styles.option` at the top.
 
-Six scenarios:
-
-- **Static list:** the options are passed in directly.
-- **Custom option rendering:** a custom `Option` component (an avatar with initials, the label and a line of details) built on `components.Option`. Fast can't assume anything about custom markup, so it re-renders every option whenever a prop changes, as upstream does. Typing therefore gains only from the filter caches. Hover and arrow keys still re-render just 2 options instead of all of them. At 5,000 options: hover 95 → 29 ms (the rest is the browser restyling 3× more DOM), and the script 13.1 → 6.1 s.
-- **Categorized (groups):** the options are split into 30 groups with headings. Options inside groups share the same element cache as a flat list. At 5,000 options: hover 56 → 7.6 ms, arrow keys 56 → 9.2 ms, typing 26 → 8.1 ms, and the script 14.9 → 6.0 s.
-- **Fetched (async search):** an `AsyncSelect` whose `loadOptions` queries a fake server (250 ms latency). Responses are new objects, like parsed JSON. Each response has to render in full in both libraries, so the gain is in hover, arrow keys and typing on the results, not in the response itself.
-- **Infinite scroll:** pages load through `onMenuScrollToBottom` and are appended. Stock re-renders every loaded option for each new page, so its load time grows with the list. Fast renders only the new page (10,000 options in 20 pages: page load median 137 → 51 ms, p95 247 → 60 ms).
-- **Multiselect:** `isMulti` with the menu kept open. Every pick or removal changes the selected values and hides or restores an option, so the whole list is re-checked. At 10,000 options: select/remove 123 → 21 ms, and the full script 10.0 → 2.0 s.
-
-The **Load → render** timer measures from data arriving to it being on screen, and **Select / remove** from a click, Enter or Backspace to the updated list.
-
-If the tab is hidden during a race, the demo says so instead of showing a speed-up. Keep the tab in the foreground: browsers pause animation frames and throttle background tabs, which distorts the numbers.
-
-## What changed
-
-All changes are in `packages/react-select/src`:
-
-1. **Option element reuse** (`Select.tsx`, `renderMenu`). Upstream keeps `focusedOption` on the root component, so moving the highlight re-rendered every option. Option elements are now cached and returned as the same object when nothing they depend on has changed, so React skips them. A hover or arrow-key press re-renders 2 options instead of N. When to throw the cache away depends on the configuration (`getOptionElementEpoch`):
-   - **Default option rendering** (default `Option`, no `formatOptionLabel`, no `styles.option` or `classNames.option`). An option's output depends only on its own fields, its focus and selection state, `theme`, `unstyled`, `classNamePrefix` and `isAppleDevice`. The cache survives other prop changes, so typing re-renders only the options that newly appear or change focus. Elements for options that are filtered out are kept too, so deleting characters doesn't recompute their styles.
-   - **Styled mode** (default `Option` and label, plus `styles.option` and/or `classNames.option`). Here the default Option's output is fully determined by the option's fields and flags, `classNamePrefix`, `isAppleDevice`, the computed style object and the user's option class names. When a prop changes, each option's styles are computed again (one `styles.option` call per option, as upstream makes while rendering) and compared structurally with the styles its cached element was rendered with. If they match, the element is reused. If not, the option re-renders and `getStyles`/`getClassNames` hand it the styles just computed, so the user's function isn't called twice. Style functions that read other props (e.g. `state.selectProps.inputValue`) still restyle correctly.
-   - **Anything custom.** Rendering may read any prop (for example `selectProps.inputValue`), so the cache is thrown away whenever any prop or `selectValue` changes. Changing any prop then re-renders every option, just as upstream does.
-2. **Derived-option cache** (`Select.tsx`, `getDerivedOptions`). Upstream ran `filterOption`, `getOptionLabel` and the other option callbacks over every option 3 times per render, plus 2 more times in `getDerivedStateFromProps` on each keystroke and once more on each hover. The result is now cached until a prop or `selectValue` changes, so each input change does 1 pass and a hover does 0.
-
-   Both caches compare props **shallowly**, like `PureComponent`, not by identity. React 19 resolves class `defaultProps` on every render, so `this.props` is a new object even after a state-only update, and identity checks would never hit.
-3. **Filter normalization cache** (`filters.ts`). `createFilter` now caches each candidate string after trimming, lowercasing and stripping diacritics. It also resolves its config once, when the filter is created, instead of on every call.
-4. **ASCII fast path** (`diacritics.ts`). Every remapped diacritic is outside the ASCII range, so pure-ASCII strings skip the diacritic regex.
-
 ## Compatibility notes
 
 These are the only behaviours that differ. All of them are about how often callbacks run, not what they return:
@@ -92,19 +68,6 @@ These are the only behaviours that differ. All of them are about how often callb
 - Mutating option *objects* in place (same object, new `label`) isn't picked up until a prop changes. Mutating the options *array* in place (`push`, `splice`, sort) is detected, so infinite-scroll code that appends to the same array works.
 - `createFilter(config)` reads `config` once when the filter is created. Mutating the config object afterwards has no effect.
 - The filter cache holds at most 100k normalized strings per filter.
-
-## React versions
-
-`yarn test:compat` ([compat/run.sh](compat/run.sh)) runs the whole suite on React 17.0.2, 18.3.1 (`createRoot` via Testing Library 14) and 19.1.0 (Testing Library 16). It runs it against both this fork and stock react-select, and fails on any test that fails only on the fork.
-
-| React | Fork        | Stock react-select | Fork-only failures |
-| ----- | ----------- | ------------------ | ------------------ |
-| 16    | 312 / 312   | 255 / 255          | 0                  |
-| 17    | 310 / 312   | 253 / 255          | 0                  |
-| 18    | 310 / 312   | 253 / 255          | 0                  |
-| 19    | 310 / 312   | 253 / 255          | 0                  |
-
-The 2 failures on React 17+ are upstream's own autofocus tests ("should call auto focus only once"). They fail the same way on stock react-select.
 
 ## Development
 
@@ -116,10 +79,3 @@ yarn bench:build && yarn bench:serve        # open http://127.0.0.1:5199/ (or ?r
 ```
 
 `__tests__/fast.test.tsx` checks that the new filter returns exactly what upstream's returns, using thousands of random inputs including diacritics. It also counts renders and callback calls to lock in the gains. The workspace is trimmed to `packages/*`; the docs site, Storybook and Cypress from upstream are not wired up.
-
-## Next steps
-
-- **Opt-in virtualization** for 10k+ options. Mount time and clearing the input still create one DOM node per option, which bounds both.
-- A custom `Option` component or `formatOptionLabel` still re-renders every visible option on each keystroke. That can't be avoided without knowing what the custom code reads.
-
-Original README: [UPSTREAM_README.md](UPSTREAM_README.md). MIT, same as upstream; [LICENSE](LICENSE) keeps the original copyright notice alongside the fork's.
