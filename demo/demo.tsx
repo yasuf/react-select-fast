@@ -194,6 +194,96 @@ const MULTI_STYLES = {
 };
 
 // ==============================
+// Callback alerts
+// ==============================
+
+// One group at a time: alert() moves focus away and back, so alerting on
+// several kinds at once (say focus and keys) would chain alerts together.
+type CallbackGroup =
+  | 'off'
+  | 'change'
+  | 'input'
+  | 'menu'
+  | 'scroll'
+  | 'focus'
+  | 'keys';
+const CALLBACK_GROUPS: { id: CallbackGroup; label: string }[] = [
+  { id: 'off', label: 'Off' },
+  { id: 'change', label: 'onChange' },
+  { id: 'input', label: 'onInputChange' },
+  { id: 'menu', label: 'onMenuOpen / onMenuClose' },
+  { id: 'scroll', label: 'onMenuScrollToTop / Bottom' },
+  { id: 'focus', label: 'onFocus / onBlur' },
+  { id: 'keys', label: 'onKeyDown' },
+];
+
+/**
+ * Shows an alert after the current event (so React commits first), and drops
+ * callbacks fired by the alert itself, such as the blur and focus around it.
+ */
+let alertQuietUntil = 0;
+const notify = (message: string) => {
+  if (performance.now() < alertQuietUntil) return;
+  alertQuietUntil = Infinity;
+  setTimeout(() => {
+    window.alert(message);
+    alertQuietUntil = performance.now() + 300;
+  });
+};
+
+const describeValue = (value: unknown): string =>
+  value == null
+    ? 'nothing'
+    : Array.isArray(value)
+    ? value.length
+      ? value.map(describeValue).join(', ')
+      : 'nothing'
+    : `“${(value as DemoOption).label}”`;
+
+const makeCallbacks = (title: string, group: CallbackGroup) => {
+  const say = (name: string, detail = '') =>
+    notify(`${title}\n\n${name} called${detail ? `\n${detail}` : ''}`);
+  switch (group) {
+    case 'change':
+      return {
+        onChange: (value: unknown, meta: { action: string }) =>
+          say(
+            'onChange',
+            `action: ${meta.action}\nvalue: ${describeValue(value)}`
+          ),
+      };
+    case 'input':
+      return {
+        onInputChange: (value: string, meta: { action: string }) => {
+          say('onInputChange', `action: ${meta.action}\nvalue: “${value}”`);
+        },
+      };
+    case 'menu':
+      return {
+        onMenuOpen: () => say('onMenuOpen'),
+        onMenuClose: () => say('onMenuClose'),
+      };
+    case 'scroll':
+      return {
+        onMenuScrollToTop: () => say('onMenuScrollToTop'),
+        onMenuScrollToBottom: () => say('onMenuScrollToBottom'),
+      };
+    case 'focus':
+      return {
+        onFocus: () => say('onFocus'),
+        onBlur: () => say('onBlur'),
+      };
+    case 'keys':
+      return {
+        onKeyDown: (e: React.KeyboardEvent) =>
+          say('onKeyDown', `key: ${e.key}`),
+      };
+    default:
+      return {};
+  }
+};
+
+// ==============================
 // Measurement
 // ==============================
 
@@ -644,21 +734,28 @@ function InfiniteSelect({
   const loaded = useRef(pageSize);
   const inFlight = useRef(false);
 
-  const loadMore = useCallback(() => {
-    if (inFlight.current || loaded.current >= dataset.length) return;
-    inFlight.current = true;
-    setLoading(true);
-    setTimeout(() => {
-      const next = fromServer(
-        dataset.slice(loaded.current, loaded.current + pageSize)
-      );
-      loaded.current += next.length;
-      inFlight.current = false;
-      meter.start('load');
-      setOptions((prev) => [...prev, ...next]);
-      setLoading(false);
-    }, FETCH_LATENCY);
-  }, [dataset, meter, pageSize]);
+  const { onMenuScrollToBottom } = common as {
+    onMenuScrollToBottom?: (e: unknown) => void;
+  };
+  const loadMore = useCallback(
+    (e?: unknown) => {
+      onMenuScrollToBottom?.(e);
+      if (inFlight.current || loaded.current >= dataset.length) return;
+      inFlight.current = true;
+      setLoading(true);
+      setTimeout(() => {
+        const next = fromServer(
+          dataset.slice(loaded.current, loaded.current + pageSize)
+        );
+        loaded.current += next.length;
+        inFlight.current = false;
+        meter.start('load');
+        setOptions((prev) => [...prev, ...next]);
+        setLoading(false);
+      }, FETCH_LATENCY);
+    },
+    [dataset, meter, pageSize, onMenuScrollToBottom]
+  );
 
   return (
     <Select
@@ -678,12 +775,14 @@ const SelectHost = memo(function SelectHost({
   scenario,
   dataset,
   styled,
+  callbacks,
   meter,
 }: {
   lib: Lib;
   scenario: Scenario;
   dataset: DemoOption[];
   styled: boolean;
+  callbacks: CallbackGroup;
   meter: Meter;
 }) {
   const { Select, Async, MenuList, RichOption } = LIBS[lib];
@@ -703,8 +802,9 @@ const SelectHost = memo(function SelectHost({
           ? CUSTOM_STYLES
           : undefined,
       'aria-label': `${LIBS[lib].title} demo select`,
+      ...makeCallbacks(LIBS[lib].title, callbacks),
     }),
-    [lib, MenuList, RichOption, meter, styled, scenario]
+    [lib, MenuList, RichOption, meter, styled, scenario, callbacks]
   );
   const groups = useMemo(
     () => (scenario === 'grouped' ? makeGroups(dataset) : null),
@@ -828,6 +928,7 @@ function Panel({
   scenario,
   options,
   styled,
+  callbacks,
   meter,
   rootRef,
   script,
@@ -838,6 +939,7 @@ function Panel({
   scenario: Scenario;
   options: DemoOption[];
   styled: boolean;
+  callbacks: CallbackGroup;
   meter: Meter;
   rootRef: (el: HTMLDivElement | null) => void;
   script: ScriptState | undefined;
@@ -859,7 +961,15 @@ function Panel({
       <header className="panel-head">
         <h2>{title}</h2>
         <div className="panel-actions">
-          <button onClick={onRun} disabled={busy}>
+          <button
+            onClick={onRun}
+            disabled={busy || callbacks !== 'off'}
+            title={
+              callbacks !== 'off'
+                ? 'Turn off callback alerts to run the script'
+                : undefined
+            }
+          >
             Run script
           </button>
           <button className="ghost" onClick={() => meter.reset()}>
@@ -869,11 +979,12 @@ function Panel({
       </header>
       <div className="select-area" ref={setAreaRef}>
         <SelectHost
-          key={`${scenario}-${options.length}-${styled}`}
+          key={`${scenario}-${options.length}-${styled}-${callbacks}`}
           lib={lib}
           scenario={scenario}
           dataset={options}
           styled={styled}
+          callbacks={callbacks}
           meter={meter}
         />
       </div>
@@ -984,6 +1095,7 @@ function FrameMeter() {
 function App() {
   const [count, setCount] = useState(5000);
   const [styled, setStyled] = useState(false);
+  const [callbacks, setCallbacks] = useState<CallbackGroup>('off');
   const [scenario, setScenario] = useState<Scenario>('static');
   const options = useMemo(() => makeOptions(count), [count]);
   const meters = useMemo(() => ({ stock: new Meter(), fast: new Meter() }), []);
@@ -998,7 +1110,7 @@ function App() {
     meters.stock.reset();
     meters.fast.reset();
     setScripts({});
-  }, [count, styled, scenario, meters]);
+  }, [count, styled, scenario, callbacks, meters]);
 
   const run = async (libs: Lib[]) => {
     setBusy(true);
@@ -1084,10 +1196,29 @@ function App() {
               <option value="styled">Custom styles.option</option>
             </select>
           </label>
+          <label>
+            Callback alerts
+            <select
+              value={callbacks}
+              onChange={(e) => setCallbacks(e.target.value as CallbackGroup)}
+              disabled={busy}
+            >
+              {CALLBACK_GROUPS.map(({ id, label }) => (
+                <option key={id} value={id}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </label>
           <button
             className="primary"
             onClick={() => run(['stock', 'fast'])}
-            disabled={busy}
+            disabled={busy || callbacks !== 'off'}
+            title={
+              callbacks !== 'off'
+                ? 'Turn off callback alerts to race'
+                : undefined
+            }
           >
             Race both
           </button>
@@ -1126,6 +1257,7 @@ function App() {
             scenario={scenario}
             options={options}
             styled={styled}
+            callbacks={callbacks}
             meter={meters[lib]}
             rootRef={(el) => {
               roots.current[lib] = el;
@@ -1139,8 +1271,7 @@ function App() {
 
       <footer className="foot">
         The script for this scenario: {describeScript(scenario)}, one step per
-        animation frame.{' '}
-        {scenarioNote(scenario)}
+        animation frame. {scenarioNote(scenario)}
         {isLocal(scenario)
           ? `At 60 fps that takes about ${(
               (scriptSteps(scenario) * 16.7) /
